@@ -152,6 +152,8 @@ def classify_gap(g: Gap, thin_near: np.ndarray, thin: np.ndarray, wall_t: float,
         band = thin[a:max(a + 1, b), max(0, c - half):c + half + 1].T
     row_cov = band.mean(axis=1) if band.size else np.zeros(1)
     n_lines = int((_runs_count(row_cov > 0.7)))
+    if n_lines and _textured_flanks(thin, g, half, a, b):
+        n_lines = 0            # floor tiles / planks showing through the opening
     win_score = min(1.0, n_lines / 2.0) if n_lines else 0.0
 
     door_score, cfg = best
@@ -177,3 +179,22 @@ def _runs_count(flags: np.ndarray) -> int:
         return 0
     f = flags.astype(np.int8)
     return int(((np.diff(np.concatenate(([0], f))) == 1)).sum())
+
+
+def _textured_flanks(mask: np.ndarray, g, half: int, a: int, b: int) -> bool:
+    """True when the same kind of parallel lines also fill the room on both
+    sides of the wall band: then the lines in the gap are a floor texture
+    (tiles, planks) and not window glazing."""
+    H, W = mask.shape
+    c = int(round(g.c))
+    off = int(round(g.t / 2 + half + 2))
+    hits = 0
+    for sgn in (-1, 1):
+        lo, hi = c + sgn * off - half, c + sgn * off + half
+        if g.o == "h":
+            band = mask[max(0, min(lo, hi)):max(0, max(lo, hi)) + 1, a:max(a + 1, b)]
+        else:
+            band = mask[a:max(a + 1, b), max(0, min(lo, hi)):max(0, max(lo, hi)) + 1].T
+        if band.size and _runs_count(band.mean(axis=1) > 0.7) >= 1:
+            hits += 1
+    return hits == 2

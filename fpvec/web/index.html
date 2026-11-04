@@ -330,7 +330,7 @@ function showResult(){
   $('#nW').textContent=P.walls.length;$('#nD').textContent=c.door;$('#nO').textContent=c.window;$('#nP').textContent=c.opening;
   $('#meta').textContent='Wall thickness '+fmt(P.mm_per_px?P.wall_thickness_px*P.mm_per_px:null,P.wall_thickness_px)+
     (P.mm_per_px?' · scale '+P.mm_per_px.toFixed(3)+' mm/px':'')+' · image '+P.image_size_px.join(' × ')+' px';
-  var S=RES.scale||{},how={given:'given',dimensions:'read from '+S.votes+' of '+S.total+' dimensions',wall:'assumed from the wall thickness',none:'unknown (no scale)'}[S.method]||'';
+  var S=RES.scale||{},how={given:'given',dimensions:'read from '+S.votes+' of '+S.total+' dimensions','room areas':'from '+S.votes+' of '+S.total+' room-area labels',wall:'assumed from the wall thickness',none:'unknown (no scale)'}[S.method]||'';
   var fx=(RES.rectify&&RES.rectify.applied||[]).join(', ');
   $('#scaleInfo').textContent='Scale: '+how+(fx?' · photo correction: '+fx:'')+((RES.notes||[]).length?' · '+RES.notes.join(' · '):'');
   var tb=$('#tW tbody');tb.innerHTML='';

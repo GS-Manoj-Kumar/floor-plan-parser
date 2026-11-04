@@ -307,3 +307,23 @@ def dim_text_layer(gt: dict, px_per_mm: float = 0.1):
             cy = (ay + by) / 2
             out.append((d["text"], ax - 60 * S, cy + len(d["text"]) * hh * 0.28, hh, True))
     return out
+
+
+def make_scan(plan_img: np.ndarray, seed: int = 0, rot_deg: float = 3.0) -> np.ndarray:
+    """Fake a poor scan: slightly rotated, yellowed paper, soft focus, noise, JPEG."""
+    rng = np.random.default_rng(seed)
+    h, w = plan_img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), rot_deg, 1.0)
+    cos, sin = abs(M[0, 0]), abs(M[0, 1])
+    nw, nh = int(h * sin + w * cos), int(h * cos + w * sin)
+    M[0, 2] += nw / 2 - w / 2
+    M[1, 2] += nh / 2 - h / 2
+    out = cv2.warpAffine(plan_img, M, (nw, nh), flags=cv2.INTER_LINEAR, borderValue=(245, 248, 250))
+    out = out.astype(np.float32) * np.array([0.88, 0.96, 1.0], np.float32)       # yellowed
+    yy = np.linspace(0.92, 1.03, nh, dtype=np.float32)[:, None, None]           # uneven lamp
+    out = out * yy
+    out = cv2.GaussianBlur(out, (0, 0), 1.1)
+    out += rng.normal(0, 5, out.shape).astype(np.float32)
+    out = np.clip(out, 0, 255).astype(np.uint8)
+    ok, enc = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return cv2.imdecode(enc, cv2.IMREAD_COLOR)

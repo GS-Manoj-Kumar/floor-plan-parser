@@ -31,13 +31,24 @@ def load_gray(image: ImageLike) -> np.ndarray:
 def binarize(gray: np.ndarray, threshold: int | None = None) -> np.ndarray:
     """Return a 0/1 mask of ink (dark) pixels.
 
-    Uses Otsu, clamped so that light-grey fills (furniture shading, hatching
-    backgrounds) are not counted as ink.
-    """
+    Otsu, clamped so that light-grey fills are not ink, AND clearly darker
+    than the local surroundings: on plans with coloured / wooden floors a
+    mid-tone floor can fall under a global threshold, but it is not darker
+    than itself, while walls and lines are much darker than the floor
+    around them."""
     if threshold is None:
         t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         threshold = int(min(max(t, 90), 170))
-    return (gray < threshold).astype(np.uint8)
+    ink = gray < threshold
+    k = max(41, (max(gray.shape) // 25) | 1)
+    small = 4 if max(gray.shape) > 1200 else 1        # do the large closing at reduced size
+    g = cv2.resize(gray, None, fx=1 / small, fy=1 / small, interpolation=cv2.INTER_AREA) if small > 1 else gray
+    ks = max(5, (k // small) | 1)
+    local = cv2.morphologyEx(g, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks)))
+    if small > 1:
+        local = cv2.resize(local, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_LINEAR)
+    contrast = local.astype(np.int16) - gray.astype(np.int16)
+    return (ink & (contrast > 40)).astype(np.uint8)
 
 
 def _run_lengths(mask: np.ndarray) -> Counter:

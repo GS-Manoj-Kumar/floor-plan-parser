@@ -97,14 +97,24 @@ def warp_sheet(img: np.ndarray, quad: np.ndarray) -> np.ndarray:
 
 
 def flatten_light(gray: np.ndarray) -> np.ndarray:
-    """Remove shadows / light gradients: divide by the smoothed background."""
-    k = max(15, (max(gray.shape) // 25) | 1)
-    bg = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
-    bg = cv2.GaussianBlur(bg, (k, k), 0)
-    out = cv2.divide(gray.astype(np.float32), np.maximum(bg.astype(np.float32), 1), scale=255.0)
+    """Remove shadows / light gradients, keeping floor colours.
+
+    The lighting field is estimated from the *brightest* surface nearby (the
+    paper), over a window larger than a room, so coloured floors and grey
+    partitions keep their tone relative to the paper while gradients and
+    shadows across the sheet are divided out."""
+    h, w = gray.shape
+    k = 256.0 / max(h, w)
+    small = cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+    r = max(5, int(max(small.shape) / 9)) | 1
+    bg = cv2.dilate(small, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (r, r)))
+    bg = cv2.GaussianBlur(bg.astype(np.float32), (0, 0), r / 2)
+    bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_CUBIC)
+    out = gray.astype(np.float32) / np.maximum(bg, 1) * 255.0
     out = np.clip(out, 0, 255).astype(np.uint8)
-    # stretch so paper is white and ink dark again
-    lo, hi = np.percentile(out, 0.5), np.percentile(out, 60)
+    # the paper is the brightest thing on a plan: map it to white without
+    # clipping light-grey floors and partitions
+    lo, hi = np.percentile(out, 0.5), np.percentile(out, 98)
     if hi - lo > 10:
         out = np.clip((out.astype(np.float32) - lo) * 255.0 / (hi - lo), 0, 255).astype(np.uint8)
     return out
@@ -177,21 +187,31 @@ def straighten(img: np.ndarray, gray: np.ndarray, info: RectifyInfo, min_deg: fl
 
 
 def is_photo(img: np.ndarray) -> bool:
-    """Heuristic for "auto": a visible sheet edge, or strongly uneven paper."""
+    """Heuristic for "auto": a visible sheet edge, or uneven light on the
+    paper around the drawing (the image border), not on the drawing itself,
+    whose coloured floors would look "uneven" too."""
     if find_sheet(img) is not None:
         return True
     g = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    small = cv2.resize(g, (64, 64), interpolation=cv2.INTER_AREA)
-    bright = small[small > np.percentile(small, 40)]
-    return bool(bright.size and (np.percentile(bright, 95) - np.percentile(bright, 5)) > 45)
+    small = cv2.resize(g, (128, 128), interpolation=cv2.INTER_AREA).astype(np.float32)
+    m = 8
+    border = np.concatenate([small[:m].ravel(), small[-m:].ravel(), small[:, :m].ravel(), small[:, -m:].ravel()])
+    bright = border[border > np.percentile(border, 30)]
+    return bool(bright.size and (np.percentile(bright, 95) - np.percentile(bright, 5)) > 40)
 
 
 def correct_photo(img: np.ndarray, mode: str = "auto") -> Tuple[np.ndarray, RectifyInfo]:
     """mode: "off" | "auto" (only when it looks like a photo) | "on"."""
     info = RectifyInfo()
-    if mode == "off" or (mode == "auto" and not is_photo(img)):
+    if mode == "off":
         info.size = (img.shape[1], img.shape[0])
         return img, info
+    if mode == "auto" and not is_photo(img):
+        # a scan / screenshot: only straighten it if it is crooked
+        g = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        out = straighten(img, g, info, min_deg=0.3)
+        info.size = (out.shape[1], out.shape[0])
+        return out, info
     out = img
     quad = find_sheet(img)
     if quad is not None:

@@ -136,17 +136,21 @@ def _beyond(mask: np.ndarray, hinge, end, rad: float) -> float:
 
 
 def soft_thin_mask(gray: np.ndarray, solid: np.ndarray, line_w: float, dilate: bool = True) -> np.ndarray:
-    """Thin-line mask with a lenient threshold: door arcs and window glazing
-    are often drawn in light grey and break apart under the ink threshold."""
-    bg = float(np.percentile(gray, 90))
-    fg = float(np.percentile(gray, 1))
-    th = bg - 0.18 * (bg - fg)
-    m = ((gray < th) & (cv2.dilate(solid, np.ones((3, 3), np.uint8)) == 0)).astype(np.uint8)
+    """Thin lines by local contrast, whatever their grey level.
+
+    Door arcs and window glazing are often light grey, and floors are often
+    coloured or textured. A black-hat (pixels darker than their immediate
+    surroundings, in strokes narrower than the kernel) picks up every thin
+    stroke, while flat floor colours, however dark, give nothing."""
+    k = max(5, int(round(line_w * 4)) | 1)
+    bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    fg, bgv = float(np.percentile(gray, 1)), float(np.percentile(gray, 99))
+    c = max(14.0, 0.09 * (bgv - fg))
+    m = ((bh > c) & (cv2.dilate(solid, np.ones((3, 3), np.uint8)) == 0)).astype(np.uint8)
     if not dilate:
         return m
     r = max(1, int(round(line_w)))
     return cv2.dilate(m, np.ones((2 * r + 1, 2 * r + 1), np.uint8))
-
 
 def detect_doors_at_wall_ends(segs, near: np.ndarray, ink: np.ndarray, wall_t: float,
                               min_r: Optional[float] = None, max_r: Optional[float] = None,
@@ -280,8 +284,17 @@ def orient_arc(hx, hy, u, v, r, near: np.ndarray, barrier: np.ndarray, wall_t: f
             vals.append(barrier[yi, xi] if 0 <= xi < W and 0 <= yi < H else 0)
         return float(np.mean(vals))
 
-    s1 = _line_ink(near, (hx, hy), e2) + wall_behind(u) * 0.8   # e1 latch => leaf along e2
-    s2 = _line_ink(near, (hx, hy), e1) + wall_behind(v) * 0.8   # e2 latch => leaf along e1
+    def wall_beyond(e, d):
+        # the latch lands on the opposite jamb: wall just past it, along the door axis
+        vals = []
+        for k in (0.3, 0.7, 1.2):
+            xi, yi = int(round(e[0] + d[0] * wall_t * k)), int(round(e[1] + d[1] * wall_t * k))
+            vals.append(barrier[max(0, yi - 1):yi + 2, max(0, xi - 1):xi + 2].any() if 0 <= xi < W and 0 <= yi < H else 0)
+        return float(np.mean(vals))
+
+    # e1 latch => leaf along e2, wall behind the hinge along u and past e1
+    s1 = _line_ink(near, (hx, hy), e2) + wall_behind(u) * 0.8 + wall_beyond(e1, u)
+    s2 = _line_ink(near, (hx, hy), e1) + wall_behind(v) * 0.8 + wall_beyond(e2, v)
     if s1 >= s2:
         latch, tip, d = e1, e2, u
     else:

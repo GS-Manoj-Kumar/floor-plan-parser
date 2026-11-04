@@ -1,5 +1,9 @@
 # fpvec: floor plan raster → vector
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/GS-Manoj-Kumar/floor-plan-parser?quickstart=1)
+&nbsp; **[Sample results](https://gs-manoj-kumar.github.io/floor-plan-parser/)** (15 coloured plans, clean and distorted)
+· [samples/RESULTS.md](samples/RESULTS.md)
+
 Turn a floor plan **image** into **vector walls, doors and windows** that a drawing/CAD tool can use directly.
 
 * Walls come out as **centrelines with thickness**, flagged **exterior / interior**, with lengths in px and mm.
@@ -10,7 +14,8 @@ Turn a floor plan **image** into **vector walls, doors and windows** that a draw
   windows as real editor objects, with the source image as a 50 % underlay.
 * **PDF input** (any page). Vector PDFs give their dimension text straight from the text layer.
 * **Automatic scale** from the plan's own dimension text: OCR (or the PDF text) reads the numbers, and each one is
-  measured against its dimension line. Units: mm, cm, m or ft-in.
+  measured against its dimension line. Units: mm, cm, m or ft-in. Without dimensions, the room-area labels
+  (`38.4 m2`, `220 sq ft`) are matched to the rooms the walls enclose.
 * **Photo correction** (toggle): photos taken at an angle are de-warped (perspective), evened out (lighting) and
   straightened (rotation / shear). If the x and y scales still differ, the dimensions fix the aspect ratio.
 * A **demo page** (upload → scale → vectorize → inspect → download), runnable in one click as a **GitHub Codespace**.
@@ -58,6 +63,28 @@ fpvec-demo            # http://localhost:8000
 from the dimensions. The image was 6 % stretched in y, which was detected and fixed. Exterior walls come out at 10 036 × 8 029 mm
 against a true 10 000 × 8 000.*
 
+## Sample set: 15 coloured plans, clean and distorted
+
+`samples/` holds 15 generated coloured floor plans in five drawing styles: sales plan, wood floors, blue walls, grey
+partitions and brown walls. They have textured floors, furniture, room labels with areas, and dimensions in mm or
+ft-in (or none). Each plan is stored clean and distorted (a phone photo at an angle, or a crooked yellowed scan),
+with exact ground truth. `python samples/run_samples.py` runs fpvec on all 30 and scores them (`fpvec/evaluate.py`):
+
+| Set | Scale found automatically | Median size error | Walls found | Wall precision | Doors found | Windows found |
+|---|---|---|---|---|---|---|
+| Clean (15) | 15 / 15 (11 dimensions, 4 room areas) | 0.12 % | 100 % | 93 % | 88 % | 98 % |
+| Distorted (15) | 14 / 15 (11 dimensions, 3 room areas) | 0.28 % | 96 % | 98 % | 75 % | 91 % |
+
+Walls are scored as the share of true wall length matched within 150 mm, after fitting the overall size. Doors and
+windows count when their centre is within 350 mm of a true one. Per-plan results with overlays are in
+[samples/RESULTS.md](samples/RESULTS.md) and on the [results site](https://gs-manoj-kumar.github.io/floor-plan-parser/),
+which `.github/workflows/pages.yml` rebuilds on every push to `main`.
+
+**Weak spots:**
+* Doors in photos and scans of the grey-partition style. After blur the light-grey partitions are barely darker than the floor.
+* Wood-plank floors, which still produce some false wall pieces: wall precision is 67–83 % on 5 of the 30 images (wood and brown-wall styles).
+* One distorted plan (09) whose partitions were partly missed, so its rooms did not close and the room-area scale could not be used.
+
 ## Photos, PDFs and automatic scale
 
 ```python
@@ -65,7 +92,7 @@ from fpvec import process
 r = process("plan.pdf", page=0, auto_scale=True, photo="auto")   # or an image path / bytes / array
 r.plan            # walls, doors, windows (px of r.image, mm filled in)
 r.image           # the traced image (PDF page rendered, photo corrected)
-r.scale_method    # "given" | "dimensions" | "wall" | "none"
+r.scale_method    # "given" | "dimensions" | "room areas" | "wall" | "none"
 r.scale.readings  # every dimension read: text, value, measured stretch, used or not
 r.rectify.applied # e.g. ["perspective", "lighting", "rotate", "aspect"]
 ```
@@ -90,6 +117,10 @@ fpvec plan.png --units ftin -o out/      # plain numbers are inches (12'-6" work
 5. **Consensus.** Each reading gives a mm/px value, and the largest group agreeing within 2.5 % wins. Horizontal and
    vertical dimensions are also solved on their own. If they disagree (a photo, or a scan stretched by the scanner),
    the image is stretched so its pixels are square.
+
+**Room areas** (no dimensions): area labels (`38.4 m2`, `38.4m²`, `12 sqm`, `220 sq ft`) are placed in the rooms
+that the detected walls enclose (doorways closed), measured to the wall centrelines. Each label gives
+`mm/px = √(area mm² / area px²)`, and the rooms vote. On the sample set this is within 1 % of the true scale.
 
 **PDF** (`inputs.py`): rendered with [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDFium; Apache-2.0 / BSD) at
 `dpi` (default 200 in the demo and CLI). Coordinates refer to the rendered page, which is also embedded as the editor underlay.
@@ -252,9 +283,10 @@ image ─► normalise (long side 1600 px) ─► ink mask ─► stroke widths 
 | Exterior wall length | 4 / 4 | | < 5 mm; thickness 240 mm ± 10 |
 
 On the bundled `examples/sample_plan.png`, v0.2 finds the grey partitions that v0.1 missed: bedroom/bath, kitchen,
-study, the master bath and wardrobe, and the inner face of the bay-window wall. It finds 46 walls, against 25 in v0.1, plus
-the entrance, kitchen, bathroom, master-bedroom and master-bath doors. Some furniture next to walls (bedside tables, a bed
-edge) still comes through as short walls or windows. That image is a 412 px wide screenshot (≈27 mm per pixel), where a door arc is only ~25 px across. Expect better results from source images **≥ 1500 px** on the long side.
+study, the master bath and wardrobe, and the inner face of the bay-window wall. It finds 41 walls, against 25 in v0.1, plus
+most of the doors. Some furniture (bedside tables, the bed) still comes through as short walls, windows or extra doors.
+Black-and-white drawings use a stricter thin-line threshold than colour plans and photos, which keeps the
+anti-aliasing of small screenshots like this one from turning into false windows. That image is a 412 px wide screenshot (≈27 mm per pixel), where a door arc is only ~25 px across. Expect better results from source images **≥ 1500 px** on the long side.
 
 ## Limitations and tuning
 
@@ -288,6 +320,10 @@ fpvec/
   inputs.py      image / PDF loading (pypdfium2), PDF text layer
   autoscale.py   dimension text -> scale (OCR, parsing, dimension lines, ticks, consensus)
   rectify.py     photo correction: sheet perspective, lighting, rotation / shear, aspect
+  synth_color.py coloured plan generator (5 styles) with ground truth
+  evaluate.py    scores a result against ground truth (mm, size-fitted shape scores)
+samples/         15 plans x (clean + distorted), outputs, RESULTS.md, run_samples.py
+scripts/build_site.py   static results site for GitHub Pages
   web/index.html    demo page (served by api.py)
   synth.py       synthetic plans with ground truth
   cli.py         command line

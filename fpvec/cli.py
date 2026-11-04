@@ -73,6 +73,7 @@ def main(argv=None) -> None:
         draw_overlay(plan, r.image, os.path.join(a.out, stem + "_overlay.png"))
     n = {k: sum(o.kind == k for o in plan.openings) for k in ("door", "window", "opening")}
     sc_txt = {"given": "given", "dimensions": f"from {r.scale.votes}/{r.scale.total} dimensions",
+              "room areas": f"from {r.scale.votes}/{r.scale.total} room-area labels",
               "wall": f"assumed {a.wall_mm:g} mm wall", "none": "none"}[r.scale_method]
     print(f"walls={len(plan.walls)} doors={n['door']} windows={n['window']} openings={n['opening']} "
           f"wall_t={plan.wall_thickness_px:.1f}px mm/px={plan.mm_per_px and round(plan.mm_per_px, 4)} ({sc_txt})"

@@ -17,6 +17,8 @@ Steps
    * ``auto_scale``: dimension text (PDF text layer, else OCR) measured
      against its dimension lines                 -> "dimensions"
      (different x / y scales -> the image is stretched to square pixels)
+   * ``auto_scale``: room-area labels ("38.4 m2") against the rooms the
+     walls enclose                               -> "room areas"
    * ``wall_mm``: assume the main wall thickness -> "wall"
 4. vectorize
 """
@@ -28,7 +30,7 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
-from .autoscale import ScaleResult, TextBox, estimate_scale, ocr_available, run_ocr
+from .autoscale import ScaleResult, TextBox, estimate_scale, ocr_available, run_ocr, scale_from_areas
 from .inputs import LoadedInput, Source, load_input
 from .models import FloorPlan
 from .pipeline import Params, vectorize
@@ -58,6 +60,14 @@ class ProcessResult:
         }
 
 
+def _colourful(img: np.ndarray) -> bool:
+    if img.ndim != 3:
+        return False
+    small = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
+    sat = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)[:, :, 1]
+    return bool((sat > 40).mean() > 0.15)
+
+
 def _numeric(boxes: List[TextBox]) -> int:
     return sum(1 for b in boxes if any(c.isdigit() for c in b.text))
 
@@ -72,6 +82,7 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
 
     scale = ScaleResult(None)
     method = "none"
+    boxes_for_areas: List[TextBox] = []
     if mm_per_px:
         method = "given"
     elif auto_scale:
@@ -84,6 +95,7 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
             notes.append(f"OCR found {len(boxes)} text boxes")
         else:
             notes.append("auto scale needs OCR: pip install fpvec[ocr]")
+        boxes_for_areas = boxes
         if boxes:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             scale = estimate_scale(gray, boxes, units)
@@ -105,7 +117,19 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
             else:
                 notes.append("no consistent dimensions found")
 
+    params = Params(**vars(params)) if params else Params()
+    # sensitive thin-line detection for photos / scans and for colour plans
+    # (lines on coloured floors have less contrast); strict for clean
+    # black-and-white drawings, where it keeps anti-aliasing out
+    params.degraded = params.degraded or bool(rinfo.applied) or _colourful(li.image)
     plan = vectorize(img, mm_per_px, params)
+    if not plan.mm_per_px and auto_scale and boxes_for_areas:
+        ar = scale_from_areas(plan, img.shape, boxes_for_areas)
+        if ar.mm_per_px:
+            plan.mm_per_px = ar.mm_per_px
+            scale = ar
+            method = "room areas"
+            notes.append(f"scale from {ar.votes} room-area label(s)")
     if not plan.mm_per_px and wall_mm and plan.wall_thickness_px:
         plan.mm_per_px = wall_mm / plan.wall_thickness_px
         method = "wall"

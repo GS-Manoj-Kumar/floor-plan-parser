@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1734.0 1467.0" width="1734" height="1467">
+<g id="walls" stroke="#d00" stroke-linecap="square" fill="none">
+<line data-id="0" data-exterior="false" x1="202.1" y1="1002.5" x2="404.2" y2="1002.5" stroke-width="17.3"/>
+<line data-id="1" data-exterior="false" x1="735.9" y1="202.1" x2="735.9" y2="603.6" stroke-width="17.3"/>
+<line data-id="2" data-exterior="false" x1="1002.5" y1="895.2" x2="1002.5" y2="1268.5" stroke-width="17.3"/>
+<line data-id="3" data-exterior="true" x1="202.1" y1="202.1" x2="1536.2" y2="202.1" stroke-width="33.6"/>
+<line data-id="4" data-exterior="false" x1="202.1" y1="734.8" x2="1012.2" y2="734.8" stroke-width="17.3"/>
+<line data-id="5" data-exterior="true" x1="202.1" y1="1268.5" x2="1536.2" y2="1268.5" stroke-width="33.6"/>
+<line data-id="6" data-exterior="true" x1="202.1" y1="202.1" x2="202.1" y2="1268.5" stroke-width="33.6"/>
+<line data-id="7" data-exterior="true" x1="1536.2" y1="202.1" x2="1536.2" y2="1268.5" stroke-width="33.6"/>
+</g><g id="openings">
+<rect data-id="0" data-type="window" x="364.1" y="182.0" width="237.3" height="40.3" fill="#0078e6"/>
+<rect data-id="1" data-type="window" x="1070.7" y="182.0" width="318.6" height="40.3" fill="#0078e6"/>
+<rect data-id="2" data-type="door" x="791.1" y="724.4" width="117.0" height="20.8" fill="#ffc800"/>
+<rect data-id="3" data-type="opening" x="404.2" y="992.1" width="91.0" height="20.8" fill="#00aa00"/>
+<rect data-id="4" data-type="window" x="404.2" y="1248.4" width="197.2" height="40.3" fill="#0078e6"/>
+<rect data-id="5" data-type="door" x="1137.9" y="1248.4" width="131.1" height="40.3" fill="#ffc800"/>
+<rect data-id="6" data-type="window" x="182.0" y="403.2" width="40.3" height="198.3" fill="#0078e6"/>
+<rect data-id="7" data-type="door" x="725.5" y="603.6" width="20.8" height="104.0" fill="#ffc800"/>
+<rect data-id="8" data-type="door" x="992.1" y="776.0" width="20.8" height="119.2" fill="#ffc800"/>
+<rect data-id="9" data-type="window" x="1516.1" y="804.1" width="40.3" height="263.4" fill="#0078e6"/>
+</g></svg>

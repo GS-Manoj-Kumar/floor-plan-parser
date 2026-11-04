@@ -12,7 +12,7 @@ from .models import FloorPlan, Opening, Wall
 from .doors import DoorArc, find_doors, soft_thin_mask
 from .openings import Gap, classify_gap, find_gaps
 from .preprocess import ImageLike, binarize, estimate_stroke_widths, load_gray
-from .thinlines import detect_line_bands, keep_connected
+from .thinlines import _texture, detect_line_bands, keep_connected
 from .walls import Seg, extract_segments, merge_collinear, snap_junctions, wall_mask
 
 
@@ -28,6 +28,7 @@ class Params:
     max_plain_opening_t: float = 8.0   # widest gap kept when nothing is drawn in it
     door_score: float = 0.6
     merge_across_openings: bool = True  # one wall object per wall run, openings hosted on it
+    degraded: bool = False             # photo / scan (set by process()): more sensitive thin-line detection
     max_opening_mm: Optional[float] = 4500.0  # used instead of max_opening_t when scale is known
     min_opening_mm: Optional[float] = 450.0
 
@@ -116,7 +117,7 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
     hollow_c: List[Seg] = []
     win_bands: List[Seg] = []
     if p.detect_thin_walls:
-        lines = line_mask(gray, ink, T)
+        lines = line_mask(gray, ink, T, sensitive=p.degraded)
         hollow_c, win_bands = detect_line_bands(lines, solid, T, line_w)
         glazing = [h for h in hollow_c if _is_glazing(h, segs, T)]
         win_bands += glazing
@@ -321,7 +322,7 @@ def _gap_from_arc(a: DoorArc, walls: List[Seg], wall_t: float) -> Gap:
     return g
 
 
-def line_mask(gray: np.ndarray, ink: np.ndarray, wall_t: float) -> np.ndarray:
+def line_mask(gray: np.ndarray, ink: np.ndarray, wall_t: float, sensitive: bool = False) -> np.ndarray:
     """Thin lines by local contrast (black-hat), not by absolute darkness.
 
     Many plans draw partitions, glazing and door swings in mid/light grey,
@@ -332,7 +333,9 @@ def line_mask(gray: np.ndarray, ink: np.ndarray, wall_t: float) -> np.ndarray:
     bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     bg = float(np.percentile(gray, 90))
     fg = float(np.percentile(gray, 1))
-    c = max(18.0, 0.12 * (bg - fg))
+    # photos / scans blur and fade grey lines: be more sensitive there; on
+    # clean images the stricter level keeps anti-aliasing and textures out
+    c = max(11.0, 0.06 * (bg - fg)) if sensitive else max(18.0, 0.12 * (bg - fg))
     return ((bh > c) | (ink > 0)).astype(np.uint8)
 
 
@@ -354,6 +357,9 @@ def grey_band_walls(gray: np.ndarray, solid: np.ndarray, wall_t: float, line_w: 
     bands &= (1 - cv2.dilate(solid, np.ones((3, 3), np.uint8)))
     segs = merge_collinear(extract_segments(bands, wall_t, min_len_factor=2.0), wall_t)
     segs = [s for s in segs if s.t <= wall_t * 1.3]
+    # floor patterns (planks, tiles) repeat on both sides of a stripe; a wall does not
+    mT = np.ascontiguousarray(m.T)
+    segs = [s for s in segs if not _texture(m if s.o == "h" else mT, s.c, s.t, int(s.a), int(s.b))]
     return (segs, bands) if with_mask else segs
 
 

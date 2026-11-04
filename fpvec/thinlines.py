@@ -98,13 +98,28 @@ def detect_line_bands(ink: np.ndarray, solid: np.ndarray, wall_t: float, line_w:
             t = d + (l1.w + l2.w) / 2
             c = (l1.c + l2.c) / 2
             for c0, c1 in _runs(col_mid, max_gap=int(wall_t * 0.5)):
-                if c1 - c0 >= wall_t * 1.5:
+                if c1 - c0 >= wall_t * 1.5 and not _texture(img, c, t, a + c0, a + c1):
                     windows.append(Seg(o, c, float(a + c0), float(a + c1), t))
             for c0, c1 in _runs(~col_any, max_gap=int(wall_t * 0.4)):
-                if c1 - c0 >= wall_t * 2.0:
+                if c1 - c0 >= wall_t * 2.0 and not _texture(img, c, t, a + c0, a + c1):
                     walls.append(Seg(o, c, float(a + c0), float(a + c1), t))
             claimed[y1:y2 + 1, a:b] = 1
     return walls, windows
+
+
+def _texture(img: np.ndarray, c: float, t: float, a: int, b: int) -> bool:
+    """Parallel lines that continue beyond the band on BOTH sides are a
+    pattern (floor planks, tiles, hatching), not a wall or a window."""
+    H = img.shape[0]
+    hits = 0
+    for sgn in (-1, 1):
+        r0 = int(round(c + sgn * (t * 0.5 + 2)))
+        r1 = int(round(c + sgn * (t * 1.6 + 4)))
+        lo, hi = max(0, min(r0, r1)), min(H, max(r0, r1) + 1)
+        band = img[lo:hi, a:b]
+        if band.size and (band.mean(axis=1) > 0.6).any():
+            hits += 1
+    return hits == 2
 
 
 def keep_connected(cands: List[Seg], anchors: List[Seg], wall_t: float, both_ends: bool = False) -> List[Seg]:
