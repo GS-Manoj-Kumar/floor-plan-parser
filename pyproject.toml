@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fpvec"
-version = "0.1.0"
+version = "0.2.0"
 description = "Raster floor plan to vector: walls (with thickness), doors (hinge + swing) and windows."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -17,6 +17,10 @@ api = ["fastapi>=0.100", "uvicorn>=0.22", "python-multipart>=0.0.6"]
 
 [project.scripts]
 fpvec = "fpvec.cli:main"
+fpvec-demo = "fpvec.api:main"
 
 [tool.setuptools]
 packages = ["fpvec"]
+
+[tool.setuptools.package-data]
+fpvec = ["web/*.html"]

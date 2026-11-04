@@ -1,0 +1,20 @@
+{
+  "name": "fpvec (floor plan vectorizer)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "pip install --upgrade pip && pip install -e '.[api,dev]'",
+  "postAttachCommand": {
+    "demo": "fpvec-demo --port 8000"
+  },
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "fpvec demo", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"],
+      "settings": { "python.testing.pytestEnabled": true, "python.testing.pytestArgs": ["tests"] }
+    },
+    "codespaces": { "openFiles": ["README.md"] }
+  },
+  "hostRequirements": { "cpus": 2 }
+}

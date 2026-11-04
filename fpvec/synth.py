@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 
-def _wall_rect(img, a, b, t, color=0, hollow=False, lw=1):
+def _wall_rect(img, a, b, t, color=0, hollow=False, lw=1, fill=None):
     (x1, y1), (x2, y2) = a, b
     if y1 == y2:
         p, q = (min(x1, x2), y1 - t / 2), (max(x1, x2), y1 + t / 2)
@@ -23,13 +23,15 @@ def _wall_rect(img, a, b, t, color=0, hollow=False, lw=1):
     p = (int(round(p[0])), int(round(p[1])))
     q = (int(round(q[0])), int(round(q[1])))
     if hollow:
+        if fill is not None:
+            cv2.rectangle(img, p, q, fill, -1)
         cv2.rectangle(img, p, q, color, lw)
     else:
         cv2.rectangle(img, p, q, color, -1)
 
 
-def make_plan(px_per_mm: float = 0.1, seed: int = 0, hollow_interior: bool = True, noise: bool = False
-              ) -> Tuple[np.ndarray, Dict]:
+def make_plan(px_per_mm: float = 0.1, seed: int = 0, hollow_interior: bool = True, noise: bool = False,
+              grey_interior: bool = False) -> Tuple[np.ndarray, Dict]:
     """Return (BGR image, ground truth dict in px).
 
     Layout (mm): 10 000 x 8 000 apartment, 240 mm exterior walls, 120 mm
@@ -58,7 +60,11 @@ def make_plan(px_per_mm: float = 0.1, seed: int = 0, hollow_interior: bool = Tru
             if s0 > pos:
                 a = (x1 + pos, y1) if horiz else (x1, y1 + pos)
                 b = (x1 + s0, y1) if horiz else (x1, y1 + s0)
-                _wall_rect(img, P(*a), P(*b), t, hollow=hollow, lw=lw)
+                if hollow and grey_interior:
+                    # sales-plan style partitions: mid-grey outline, light-grey fill
+                    _wall_rect(img, P(*a), P(*b), t, color=175, hollow=True, lw=lw, fill=222)
+                else:
+                    _wall_rect(img, P(*a), P(*b), t, hollow=hollow, lw=lw)
             if kind is None:
                 break
             a = (x1 + s0, y1) if horiz else (x1, y1 + s0)

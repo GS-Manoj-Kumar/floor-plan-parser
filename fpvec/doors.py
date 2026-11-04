@@ -310,10 +310,18 @@ def find_doors(thin: np.ndarray, gray: np.ndarray, solid: np.ndarray, barrier: n
         sc, hx, hy, u, v, rr = b
         latch, tip, o, leafish = orient_arc(hx, hy, u, v, rr, near, barrier, wall_t)
         # a door hangs between two jambs: wall ink near the hinge and the latch
-        jamb = _near_wall(np.maximum(barrier, ink), (hx, hy), wall_t) + _near_wall(np.maximum(barrier, ink), latch, wall_t)
+        # one jamb on a detected wall, the other at least on some ink (a short
+        # wall stub may be too small to have become a wall)
+        wb = _near_wall(barrier, (hx, hy), wall_t * 1.3) + _near_wall(barrier, latch, wall_t * 1.3)
+        wi = _near_wall(ink, (hx, hy), wall_t) + _near_wall(ink, latch, wall_t)
+        jamb = 2.0 if (wb >= 1 and wi + wb >= 3) or wb == 2 else wb
         # furniture (toilets, chairs) has ink inside the swept quarter
         clutter = _sector_ink(ink, hx, hy, u, v, rr)
         score = sc + 0.15 * jamb - 1.5 * clutter
+        # the closed leaf lies in a wall line: wall ink continues behind the
+        # hinge or past the latch along the door's axis (rejects furniture)
+        if not _in_wall_line(barrier, (hx, hy), latch, rr, wall_t):
+            continue
         if score < 0.5:
             continue
         cands.append(DoorArc((hx, hy), latch, tip, rr, o, float(min(1.0, score)), int(jamb)))
@@ -354,3 +362,16 @@ def same_arc(a: DoorArc, b: DoorArc, tol: float = 0.3) -> bool:
     ends_a, ends_b = (a.latch, a.tip), (b.latch, b.tip)
     return (math.dist(ends_a[0], ends_b[0]) < t and math.dist(ends_a[1], ends_b[1]) < t) or \
            (math.dist(ends_a[0], ends_b[1]) < t and math.dist(ends_a[1], ends_b[0]) < t)
+
+
+def _in_wall_line(barrier: np.ndarray, hinge, latch, r: float, wall_t: float) -> bool:
+    H, W = barrier.shape
+    ux, uy = (latch[0] - hinge[0]) / r, (latch[1] - hinge[1]) / r
+    pts = [(hinge[0] - ux * wall_t * k, hinge[1] - uy * wall_t * k) for k in (0.4, 0.8, 1.2)]
+    pts += [(latch[0] + ux * wall_t * k, latch[1] + uy * wall_t * k) for k in (0.4, 0.8, 1.2)]
+    k = max(1, int(round(wall_t * 0.35)))
+    for x, y in pts:
+        xi, yi = int(round(x)), int(round(y))
+        if barrier[max(0, yi - k):min(H, yi + k + 1), max(0, xi - k):min(W, xi + k + 1)].any():
+            return True
+    return False

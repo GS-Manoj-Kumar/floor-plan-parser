@@ -5,6 +5,7 @@ import argparse
 import os
 
 from .export import draw_overlay, to_dxf, to_json, to_svg
+from .floorplan_doc import save_floorplan_doc
 from .pipeline import Params, vectorize
 from .scale import mm_per_px_from_reference
 
@@ -21,7 +22,8 @@ def main(argv=None) -> None:
                     help="assume the detected (main) wall thickness is this many mm, e.g. 200")
     ap.add_argument("--wall-px", type=float, help="override wall thickness estimate (px)")
     ap.add_argument("--no-thin-walls", action="store_true", help="only detect solid (filled) walls")
-    ap.add_argument("--formats", default="json,svg,dxf,png")
+    ap.add_argument("--formats", default="json,svg,dxf,png,floorplan",
+                    help="comma list of json, svg, dxf, png, floorplan (the Floor Plan editor document)")
     a = ap.parse_args(argv)
 
     params = Params(wall_thickness_px=a.wall_px, detect_thin_walls=not a.no_thin_walls)
@@ -41,6 +43,8 @@ def main(argv=None) -> None:
         to_svg(plan, os.path.join(a.out, stem + ".svg"))
     if "dxf" in fm:
         to_dxf(plan, os.path.join(a.out, stem + ".dxf"))
+    if "floorplan" in fm:
+        save_floorplan_doc(plan, os.path.join(a.out, stem + "_floor_plan.json"), image_path=a.image)
     if "png" in fm:
         draw_overlay(plan, a.image, os.path.join(a.out, stem + "_overlay.png"))
     n = {k: sum(o.kind == k for o in plan.openings) for k in ("door", "window", "opening")}

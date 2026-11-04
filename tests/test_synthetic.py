@@ -88,3 +88,17 @@ def test_blank_image_does_not_crash():
     img = np.full((400, 500, 3), 255, np.uint8)
     plan = vectorize(img)
     assert plan.walls == [] and plan.openings == []
+
+
+def test_grey_partitions_found():
+    """Partitions drawn in mid-grey with a light fill (common in sales plans)
+    are below any global ink threshold; they must still come out as walls."""
+    img, gt = make_plan(hollow_interior=True, grey_interior=True)
+    plan = vectorize(img, gt["mm_per_px"])
+    k = gt["mm_per_px"]
+    interior = [w for w in plan.walls if not w.exterior]
+    total = sum(w.length for w in interior) * k
+    # interior walls in the layout: 4000 + 6000 + 4000 + 2500 = 16 500 mm (minus doors)
+    assert total > 11000, total
+    for w in interior:
+        assert 70 < w.thickness * k < 220

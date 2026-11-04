@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300.0 1100.0" width="1300" height="1100">
 <g id="walls" stroke="#d00" stroke-linecap="square" fill="none">
 <line data-id="0" data-exterior="false" x1="151.5" y1="550.5" x2="543.6" y2="550.5" stroke-width="13.8"/>
-<line data-id="1" data-exterior="false" x1="151.5" y1="750.5" x2="299.8" y2="750.5" stroke-width="13.0"/>
-<line data-id="2" data-exterior="false" x1="550.5" y1="151.5" x2="550.5" y2="451.8" stroke-width="13.8"/>
-<line data-id="3" data-exterior="false" x1="750.5" y1="671.1" x2="750.5" y2="951.0" stroke-width="13.0"/>
+<line data-id="1" data-exterior="false" x1="151.5" y1="750.3" x2="302.2" y2="750.3" stroke-width="13.8"/>
+<line data-id="2" data-exterior="false" x1="550.5" y1="151.5" x2="550.5" y2="452.6" stroke-width="13.8"/>
+<line data-id="3" data-exterior="false" x1="750.3" y1="671.1" x2="750.3" y2="951.0" stroke-width="13.8"/>
 <line data-id="4" data-exterior="true" x1="151.5" y1="151.5" x2="1151.3" y2="151.5" stroke-width="25.2"/>
 <line data-id="5" data-exterior="true" x1="151.5" y1="951.0" x2="1151.3" y2="951.0" stroke-width="25.2"/>
 <line data-id="6" data-exterior="true" x1="151.5" y1="151.5" x2="151.5" y2="951.0" stroke-width="25.2"/>
@@ -11,12 +11,12 @@
 </g><g id="openings">
 <rect data-id="0" data-type="window" x="272.2" y="136.4" width="178.8" height="30.2" fill="#0078e6"/>
 <rect data-id="1" data-type="window" x="801.9" y="136.4" width="238.9" height="30.2" fill="#0078e6"/>
-<rect data-id="2" data-type="window" x="544.4" y="526.5" width="47.1" height="34.1" fill="#0078e6"/>
-<rect data-id="3" data-type="door" x="301.7" y="742.7" width="68.2" height="15.6" fill="#ffc800"/>
+<rect data-id="2" data-type="window" x="544.4" y="526.5" width="47.9" height="34.1" fill="#0078e6"/>
+<rect data-id="3" data-type="door" x="300.1" y="742.1" width="69.1" height="16.6" fill="#ffc800"/>
 <rect data-id="4" data-type="window" x="301.4" y="935.9" width="149.5" height="30.2" fill="#0078e6"/>
 <rect data-id="5" data-type="door" x="851.5" y="935.9" width="99.1" height="30.2" fill="#ffc800"/>
 <rect data-id="6" data-type="window" x="136.4" y="301.4" width="30.2" height="149.5" fill="#0078e6"/>
-<rect data-id="7" data-type="door" x="542.2" y="448.0" width="16.6" height="76.4" fill="#ffc800"/>
-<rect data-id="8" data-type="door" x="742.7" y="588.6" width="15.6" height="81.0" fill="#ffc800"/>
+<rect data-id="7" data-type="door" x="542.2" y="447.6" width="16.6" height="83.9" fill="#ffc800"/>
+<rect data-id="8" data-type="door" x="742.1" y="588.6" width="16.6" height="81.0" fill="#ffc800"/>
 <rect data-id="9" data-type="window" x="1136.7" y="602.1" width="29.2" height="199.1" fill="#0078e6"/>
 </g></svg>

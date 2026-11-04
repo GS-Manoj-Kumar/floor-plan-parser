@@ -1,6 +1,7 @@
 """End-to-end raster floor plan -> vector walls / doors / windows."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -115,8 +116,23 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
     hollow_c: List[Seg] = []
     win_bands: List[Seg] = []
     if p.detect_thin_walls:
-        hollow_c, win_bands = detect_line_bands(ink, solid, T, line_w)
+        lines = line_mask(gray, ink, T)
+        hollow_c, win_bands = detect_line_bands(lines, solid, T, line_w)
+        glazing = [h for h in hollow_c if _is_glazing(h, segs, T)]
+        win_bands += glazing
+        hollow_c = [h for h in hollow_c if not any(h is g for g in glazing)]
+        hollow_c = _drop_parallel_dupes(hollow_c, segs, T)
         conn = keep_connected(hollow_c, segs, T)
+        # grey-band partitions are the least certain candidates: furniture
+        # outlines look the same, so they must span between walls (both ends)
+        Hs, Ws = gray.shape
+        band_segs, band_mask = grey_band_walls(gray, solid, T, line_w, with_mask=True)
+        bands = [b for b in band_segs
+                 if not any(_overlaps(b, h, T) for h in hollow_c + segs)
+                 and b.c > 2 * T and b.c < (Hs if b.o == "h" else Ws) - 2 * T]
+        bands = _drop_parallel_dupes(bands, segs + conn, T)
+        conn += _anchored_bands(bands, segs + conn, (solid | band_mask).astype(np.uint8), T)
+        hollow_c += bands
         hollow = conn + [h for h in hollow_c if h not in conn and h.length >= 12 * T]
     walls = merge_collinear(segs + hollow, T)
     barrier = (solid | _raster(hollow, solid.shape)).astype(np.uint8)
@@ -156,6 +172,10 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
     for i, arc in enumerate(arcs):
         if i in used_arcs or arc.score < p.door_score or arc.jambs < 2:
             continue
+        if not (_door_supported(arc, walls, barrier, T) or arc.score >= 0.97):
+            continue
+        if any(q.kind == "door" and q.hinge is not None and math.dist(q.hinge, arc.hinge) < arc.r * 0.6 for q in kept):
+            continue
         g = _gap_from_arc(arc, walls, T)
         if any(q.o == g.o and abs(q.c - g.c) < T * 1.5 and g.a < q.b and g.b > q.a for q in kept):
             continue
@@ -163,7 +183,8 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
 
     # window bands that are not inside a found gap (e.g. a whole wall stretch
     # drawn as a window) become windows on their own if they touch the walls
-    wb = keep_connected(win_bands, walls, T)
+    # a stand-alone window band must sit ON a wall line, end to end with a wall
+    wb = [w for w in win_bands if _on_wall_line(w, walls, T)]
     for w in wb:
         if any(g.o == w.o and abs(g.c - w.c) < T and w.a < g.b and w.b > g.a for g in kept):
             continue
@@ -300,10 +321,179 @@ def _gap_from_arc(a: DoorArc, walls: List[Seg], wall_t: float) -> Gap:
     return g
 
 
+def line_mask(gray: np.ndarray, ink: np.ndarray, wall_t: float) -> np.ndarray:
+    """Thin lines by local contrast (black-hat), not by absolute darkness.
+
+    Many plans draw partitions, glazing and door swings in mid/light grey,
+    which a global ink threshold drops. A black-hat keeps every stroke
+    narrower than ~0.6 wall thickness that is clearly darker than its
+    surroundings, whatever its absolute grey level."""
+    k = max(3, int(round(wall_t * 0.6)) | 1)
+    bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    bg = float(np.percentile(gray, 90))
+    fg = float(np.percentile(gray, 1))
+    c = max(18.0, 0.12 * (bg - fg))
+    return ((bh > c) | (ink > 0)).astype(np.uint8)
+
+
+def grey_band_walls(gray: np.ndarray, solid: np.ndarray, wall_t: float, line_w: float, with_mask: bool = False):
+    """Partitions drawn as a grey band (grey outline + light fill, or a flat
+    grey fill), lighter than the ink threshold.
+
+    A black-hat with a ~1.2 t kernel marks everything darker than its
+    surroundings and narrower than ~1.2 t; an opening of ~0.4 t then keeps
+    only bands at least that thick. Wide grey areas (rugs, shading) are not
+    narrower than the kernel and drop out; thin lines drop out in the opening."""
+    k = max(5, int(round(wall_t * 1.2)) | 1)
+    bh = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    bg = float(np.percentile(gray, 90))
+    fg = float(np.percentile(gray, 1))
+    m = (bh > max(18.0, 0.1 * (bg - fg))).astype(np.uint8)
+    ko = max(int(round(line_w * 3)), int(round(wall_t * 0.45)))
+    bands = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((ko, ko), np.uint8))
+    bands &= (1 - cv2.dilate(solid, np.ones((3, 3), np.uint8)))
+    segs = merge_collinear(extract_segments(bands, wall_t, min_len_factor=2.0), wall_t)
+    segs = [s for s in segs if s.t <= wall_t * 1.3]
+    return (segs, bands) if with_mask else segs
+
+
+def _anchored_bands(bands: List[Seg], net: List[Seg], obstacles: np.ndarray, wall_t: float) -> List[Seg]:
+    """Keep bands that touch the wall network at one end and, at the other
+    end, either touch it too or face a wall across a door-sized gap."""
+    kept: List[Seg] = []
+    net = list(net)
+    pending = list(bands)
+    changed = True
+    while changed and pending:
+        changed = False
+        bar = (_raster(net, obstacles.shape) | obstacles).astype(np.uint8)
+        rest = []
+        for b in pending:
+            ta = keep_connected([b], net, wall_t) != [] and _end_touch(b, net, wall_t, "a")
+            tb = keep_connected([b], net, wall_t) != [] and _end_touch(b, net, wall_t, "b")
+            ok = (ta and (tb or _faces_wall(b, "b", bar, wall_t))) or (tb and _faces_wall(b, "a", bar, wall_t))
+            if ok:
+                kept.append(b)
+                net.append(b)
+                changed = True
+            else:
+                rest.append(b)
+        pending = rest
+    return kept
+
+
+def _end_touch(s: Seg, net: List[Seg], wall_t: float, end: str) -> bool:
+    e = s.a if end == "a" else s.b
+    for p in net:
+        tol = wall_t * 1.2 + (s.t + p.t) / 2
+        if p.o == s.o:
+            if abs(p.c - s.c) < tol * 0.6 and p.a - tol <= e <= p.b + tol:
+                return True
+        elif abs(p.c - e) < tol and p.a - tol <= s.c <= p.b + tol:
+            return True
+    return False
+
+
+def _faces_wall(s: Seg, end: str, bar: np.ndarray, wall_t: float, reach: float = 6.0) -> bool:
+    """Walking on from this end along the band's axis meets a wall within
+    ``reach`` wall thicknesses (the band stops at a door)."""
+    H, W = bar.shape
+    step = -1 if end == "a" else 1
+    start = s.a if end == "a" else s.b
+    c = int(round(s.c))
+    half = max(1, int(round(s.t * 0.3)))
+    for d in range(int(wall_t * 0.5), int(wall_t * reach)):
+        p = int(round(start + step * d))
+        if s.o == "h":
+            if not 0 <= p < W:
+                return False
+            if bar[max(0, c - half):c + half + 1, p].any():
+                return True
+        else:
+            if not 0 <= p < H:
+                return False
+            if bar[p, max(0, c - half):c + half + 1].any():
+                return True
+    return False
+
+
+def _overlaps(a: Seg, b: Seg, wall_t: float) -> bool:
+    return a.o == b.o and abs(a.c - b.c) < wall_t * 0.8 and min(a.b, b.b) - max(a.a, b.a) > 0.5 * min(a.length, b.length)
+
+
+def _drop_parallel_dupes(cands: List[Seg], solid_segs: List[Seg], wall_t: float) -> List[Seg]:
+    """Of thin-line walls running side by side within ~1.2 wall thicknesses,
+    keep one: a wall beside a solid wall, or the longest of a bundle
+    (a bookshelf or wardrobe drawn against a partition)."""
+    out: List[Seg] = []
+    for h in sorted(cands, key=lambda x: -x.length):
+        def beside(p):
+            if p.o != h.o or abs(p.c - h.c) > wall_t * 1.2 or abs(p.c - h.c) < 1e-6 and p is h:
+                return False
+            ov = min(p.b, h.b) - max(p.a, h.a)
+            return ov > 0.5 * min(h.length, p.length)
+        if any(beside(p) for p in solid_segs) or any(beside(p) for p in out):
+            continue
+        out.append(h)
+    return out
+
+
+def _door_supported(a: DoorArc, walls: List[Seg], barrier: np.ndarray, wall_t: float) -> bool:
+    """A door found only from its arc must sit in a wall line: a wall on the
+    door's own axis ends at the hinge or the latch, or there is wall on both
+    sides (a door between two wall stubs)."""
+    o = a.o
+    h_al, h_ac = (a.hinge[0], a.hinge[1]) if o == "h" else (a.hinge[1], a.hinge[0])
+    l_al = a.latch[0] if o == "h" else a.latch[1]
+    for s in walls:
+        if s.o != o or abs(s.c - h_ac) > max(s.t, wall_t) * 1.3:
+            continue
+        if min(abs(s.a - h_al), abs(s.b - h_al), abs(s.a - l_al), abs(s.b - l_al)) <= wall_t * 2.0:
+            return True
+    H, W = barrier.shape
+    ux, uy = (a.latch[0] - a.hinge[0]) / a.r, (a.latch[1] - a.hinge[1]) / a.r
+    k = max(1, int(round(wall_t * 0.35)))
+
+    def hit(p0, sgn):
+        for f in (0.4, 0.8, 1.2, 1.6, 2.0):
+            x, y = int(round(p0[0] + sgn * ux * wall_t * f)), int(round(p0[1] + sgn * uy * wall_t * f))
+            if barrier[max(0, y - k):min(H, y + k + 1), max(0, x - k):min(W, x + k + 1)].any():
+                return True
+        return False
+    return hit(a.hinge, -1) and hit(a.latch, 1)
+
+
+def _on_wall_line(h: Seg, walls: List[Seg], wall_t: float) -> bool:
+    for s in walls:
+        if s.o != h.o or abs(s.c - h.c) > max(s.t, h.t, wall_t) * 0.5:
+            continue
+        if abs(s.b - h.a) <= wall_t * 1.5 or abs(h.b - s.a) <= wall_t * 1.5 or (s.a < h.b and h.a < s.b):
+            return True
+    return False
+
+
+def _is_glazing(h: Seg, solid_segs: List[Seg], wall_t: float) -> bool:
+    """A thin double line that continues a clearly thicker solid wall on the
+    same axis is window glazing in that wall, not a partition."""
+    ends = 0
+    for s in solid_segs:
+        if s.o != h.o or abs(s.c - h.c) > max(s.t, wall_t) * 0.6:
+            continue
+        touch_a, touch_b = abs(s.b - h.a) <= wall_t * 1.5, abs(h.b - s.a) <= wall_t * 1.5
+        if (touch_a or touch_b) and s.t >= h.t * 1.3:
+            return True
+        ends |= (1 if touch_a else 0) | (2 if touch_b else 0)
+    return ends == 3
+
+
 def _main_clusters(walls: List[Seg], gaps: List[Gap], wall_t: float, keep_frac: float = 0.15):
     """Drop small groups of walls/openings not connected to the main plan
     (legends, key plans, north arrows, title blocks). Openings count as
     connections, so a wall separated from the rest only by a window stays."""
+    # plain openings (nothing drawn in the gap) are weak evidence: they do not
+    # link clusters, and they go with whatever cluster their walls end up in
+    plain = [g for g in gaps if g.kind == "opening"]
+    gaps = [g for g in gaps if g.kind != "opening"]
     items = list(walls) + list(gaps)
     n = len(items)
     if not walls:
@@ -346,10 +536,16 @@ def _main_clusters(walls: List[Seg], gaps: List[Gap], wall_t: float, keep_frac: 
         L = items[i].b - items[i].a
         centre[r] = (cx + (b[0] + b[2]) / 2 * L, cy + (b[1] + b[3]) / 2 * L, wsum + L)
     def inside(r):
-        cx, cy, wsum = centre[r]
-        cx, cy = cx / max(wsum, 1e-9), cy / max(wsum, 1e-9)
-        return mb[0] <= cx <= mb[2] and mb[1] <= cy <= mb[3]
+        bs = [boxes[i] for i in range(n) if find(i) == r]
+        m = wall_t * 1.5        # mb is already grown by 2 t: allow only a little more
+        return (min(b[0] for b in bs) >= mb[0] + m and min(b[1] for b in bs) >= mb[1] + m
+                and max(b[2] for b in bs) <= mb[2] - m and max(b[3] for b in bs) <= mb[3] - m)
     keep = [total[find(i)] >= keep_frac * best or inside(find(i)) for i in range(n)]
     nw = len(walls)
-    return ([w for i, w in enumerate(walls) if keep[i]],
-            [g for i, g in enumerate(gaps) if keep[nw + i]])
+    kw = [w for i, w in enumerate(walls) if keep[i]]
+    kg = [g for i, g in enumerate(gaps) if keep[nw + i]]
+
+    def near_kept(g):
+        return any(w.o == g.o and abs(w.c - g.c) < wall_t * 1.5 and w.a - 2 * wall_t <= g.b and g.a <= w.b + 2 * wall_t
+                   for w in kw)
+    return kw, kg + [g for g in plain if near_kept(g)]
