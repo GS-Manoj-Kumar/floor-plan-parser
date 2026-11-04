@@ -85,6 +85,47 @@ which `.github/workflows/pages.yml` rebuilds on every push to `main`.
 * Wood-plank floors, which still produce some false wall pieces: wall precision is 67–83 % on 5 of the 30 images (wood and brown-wall styles).
 * One distorted plan (09) whose partitions were partly missed, so its rooms did not close and the room-area scale could not be used.
 
+## Preparation step (clean the image before tracing)
+
+After the photo correction (perspective, rotation, lighting) and **before** the scale is read and the plan is traced,
+the image can be cleaned up so that only what matters is left. The demo page shows a **Prepare** bar as soon as an image
+is loaded, and the preview updates live:
+
+| Control | What it does |
+|---|---|
+| **Black & white** | Colour → grey levels: coloured walls and floors become shades of grey |
+| **Darken lines** (0–220) | Grey at or below this level becomes pure black: pulls faint / grey walls and partitions to black |
+| **Whiten background** (0–135) | Grey at or above 255 − value becomes pure white: removes light floor colours, wood / tile textures, shading |
+| **Pure black / white** | Every pixel becomes black or white, split halfway between the two levels |
+| **Brush** (size slider) / **Rectangle** / **Polygon** | Mark areas that are not needed: furniture, legends, key plans, title blocks, stamps, text |
+| **Remove / Blur** | A marked area is painted white (ignored completely) or blurred (fine detail fades, the rest stays). Blur strength has its own slider |
+| **Undo** (Ctrl+Z), **Clear areas**, **Reset**, **Hold: original** | Step back, clear, start over, compare with the corrected image |
+
+Keys: `V` pan, `B` brush, `R` rectangle, `P` polygon. For a polygon, click the corners, then double-click,
+press Enter or click the first corner. Right-drag pans with any tool, and the wheel zooms.
+
+The page sends the settings as a small recipe (JSON, coordinates in corrected-image pixels). The server applies it
+with `fpvec/prepare.py` in the same order as the preview: grey levels, then the areas in the order drawn. Browser
+preview and server result differ by about 0.1 grey levels on average, so what you see is what gets traced. The same
+recipe works from Python and the CLI:
+
+```python
+r = process("photo.jpg", photo="auto", prep={
+    "grayscale": True, "black": 110, "white": 210,
+    "masks": [{"type": "rect", "points": [[40, 900], [600, 1200]], "mode": "white"},
+              {"type": "brush", "points": [[300, 300], [420, 310]], "size": 40, "mode": "blur", "blur": 12}]})
+```
+
+```bash
+fpvec photo.jpg --bw --darken 110 --whiten 210 -o out/     # shortcuts for the grey levels
+fpvec photo.jpg --prep recipe.json -o out/                  # full recipe incl. areas
+```
+
+On the sample set, a plain *black & white, darken 110, whiten 200* recipe raised wall precision on the wood-floor plans
+from 67–69 % to 78–85 %, and walls found on the grey-partition scans from 77 % to 96 %. It can also hurt: on one
+photo it whitened light-grey partitions away. The right settings depend on the image, so they are left to you rather
+than applied automatically.
+
 ## Photos, PDFs and automatic scale
 
 ```python
@@ -316,7 +357,8 @@ fpvec/
   export.py      JSON, SVG, DXF, overlay PNG
   scale.py       mm-per-px from a reference distance or wall thickness
   floorplan_doc.py  export to the Floor Plan editor document (floor_plan.json)
-  process.py     one call: load (image / PDF) -> photo correction -> auto scale -> vectorize
+  process.py     one call: load (image / PDF) -> photo correction -> preparation -> auto scale -> vectorize
+  prepare.py     preparation recipe: black & white, line darkness, areas removed / blurred
   inputs.py      image / PDF loading (pypdfium2), PDF text layer
   autoscale.py   dimension text -> scale (OCR, parsing, dimension lines, ticks, consensus)
   rectify.py     photo correction: sheet perspective, lighting, rotation / shear, aspect

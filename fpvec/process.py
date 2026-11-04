@@ -12,6 +12,8 @@ Steps
    its text layer is kept)
 2. photo correction (``photo``: "off" | "auto" | "on"): perspective, lighting,
    rotation / shear (see rectify.py)
+2b. preparation (``prep``, see prepare.py): black & white, line darkness,
+   background whitening, and areas painted white or blurred
 3. scale, first that applies:
    * ``mm_per_px`` given                         -> "given"
    * ``auto_scale``: dimension text (PDF text layer, else OCR) measured
@@ -34,6 +36,7 @@ from .autoscale import ScaleResult, TextBox, estimate_scale, ocr_available, run_
 from .inputs import LoadedInput, Source, load_input
 from .models import FloorPlan
 from .pipeline import Params, vectorize
+from .prepare import apply_prep, describe, is_identity
 from .rectify import RectifyInfo, correct_photo, fix_aspect
 
 
@@ -74,11 +77,17 @@ def _numeric(boxes: List[TextBox]) -> int:
 
 def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = True, photo: str = "auto",
             page: int = 0, dpi: float = 300.0, units: str = "auto", wall_mm: Optional[float] = 200.0,
-            params: Optional[Params] = None) -> ProcessResult:
+            params: Optional[Params] = None, prep: Optional[dict] = None) -> ProcessResult:
     notes: List[str] = []
     li: LoadedInput = load_input(src, page=page, dpi=dpi)
     img, rinfo = correct_photo(li.image, photo)
     moved = any(a in rinfo.applied for a in ("perspective", "rotate", "shear"))
+    colourful = _colourful(li.image)
+    if prep and not is_identity(prep):
+        # preparation works on the corrected image, before scale and tracing
+        img = apply_prep(img, prep)
+        colourful = _colourful(img)
+        notes.append("preparation applied: " + describe(prep))
 
     scale = ScaleResult(None)
     method = "none"
@@ -121,7 +130,7 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
     # sensitive thin-line detection for photos / scans and for colour plans
     # (lines on coloured floors have less contrast); strict for clean
     # black-and-white drawings, where it keeps anti-aliasing out
-    params.degraded = params.degraded or bool(rinfo.applied) or _colourful(li.image)
+    params.degraded = params.degraded or bool(rinfo.applied) or colourful
     plan = vectorize(img, mm_per_px, params)
     if not plan.mm_per_px and auto_scale and boxes_for_areas:
         ar = scale_from_areas(plan, img.shape, boxes_for_areas)

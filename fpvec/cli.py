@@ -37,6 +37,11 @@ def main(argv=None) -> None:
                     help="photo correction: perspective, lighting, skew (default auto)")
     ap.add_argument("--page", type=int, default=1, help="PDF page (1-based)")
     ap.add_argument("--dpi", type=float, default=200, help="PDF render resolution")
+    ap.add_argument("--prep", help="preparation recipe (JSON file) applied after photo correction: "
+                    "black & white, line darkness, areas removed / blurred (see fpvec/prepare.py)")
+    ap.add_argument("--bw", action="store_true", help="shortcut: convert to black & white before tracing")
+    ap.add_argument("--darken", type=int, default=0, help="shortcut: grey at or below this becomes black (0-254)")
+    ap.add_argument("--whiten", type=int, default=255, help="shortcut: grey at or above this becomes white (1-255)")
     ap.add_argument("--wall-px", type=float, help="override wall thickness estimate (px)")
     ap.add_argument("--no-thin-walls", action="store_true", help="only detect solid (filled) walls")
     ap.add_argument("--formats", default="json,svg,dxf,png,floorplan",
@@ -46,7 +51,16 @@ def main(argv=None) -> None:
     mm = a.mm_per_px
     if a.ref:
         mm = mm_per_px_from_reference((a.ref[0], a.ref[1]), (a.ref[2], a.ref[3]), a.ref[4])
-    r = process(a.image, mm_per_px=mm, auto_scale=not a.no_auto_scale, photo=a.photo, page=a.page - 1,
+    recipe = None
+    if a.prep:
+        import json as _json
+        with open(a.prep, encoding="utf-8") as f:
+            recipe = _json.load(f)
+    if a.bw or a.darken or a.whiten < 255:
+        recipe = dict(recipe or {}, grayscale=a.bw or (recipe or {}).get("grayscale", False),
+                      black=a.darken or (recipe or {}).get("black", 0),
+                      white=a.whiten if a.whiten < 255 else (recipe or {}).get("white", 255))
+    r = process(a.image, prep=recipe, mm_per_px=mm, auto_scale=not a.no_auto_scale, photo=a.photo, page=a.page - 1,
                 dpi=a.dpi, units=a.units, wall_mm=a.wall_mm or None,
                 params=Params(wall_thickness_px=a.wall_px, detect_thin_walls=not a.no_thin_walls))
     plan = r.plan

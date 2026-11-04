@@ -11,6 +11,9 @@ POST /api/vectorize   multipart: file=<image or PDF>, and optionally
                       page=<n>, dpi=<f>   PDF page (1-based) and render resolution
                       units=auto|mm|cm|m|ftin   how plain dimension numbers are read
                       wall_px, thin_walls
+                      prep=<JSON>         preparation recipe applied after photo correction
+                                          (black & white, line darkness, areas removed / blurred;
+                                          see fpvec/prepare.py)
   -> {"plan", "floorplan" (editor document), "scale" (method + every dimension
       read), "rectify", "input", "notes", "image" (traced image), "dxf", "svg"}
 POST /api/preview     file, page, dpi, photo -> the image that will be traced
@@ -18,6 +21,7 @@ POST /api/preview     file, page, dpi, photo -> the image that will be traced
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
 import time
@@ -116,13 +120,19 @@ async def api_preview(file: UploadFile = File(...), page: int = Form(1), dpi: fl
 async def api_vectorize(file: UploadFile = File(...), mm_per_px: Optional[float] = Form(None),
                         wall_mm: Optional[float] = Form(None), wall_px: Optional[float] = Form(None),
                         thin_walls: int = Form(1), auto_scale: int = Form(0), photo: str = Form("off"),
-                        page: int = Form(1), dpi: float = Form(200), units: str = Form("auto")):
+                        page: int = Form(1), dpi: float = Form(200), units: str = Form("auto"),
+                        prep: Optional[str] = Form(None)):
     raw = await _read(file)
     t0 = time.time()
     try:
+        recipe = json.loads(prep) if prep else None
+    except ValueError:
+        raise HTTPException(400, "prep must be JSON (see fpvec/prepare.py)")
+    try:
         r = process(raw, mm_per_px=mm_per_px or None, auto_scale=bool(auto_scale), photo=photo,
                     page=max(0, page - 1), dpi=dpi, units=units, wall_mm=wall_mm or None,
-                    params=Params(wall_thickness_px=wall_px or None, detect_thin_walls=bool(thin_walls)))
+                    params=Params(wall_thickness_px=wall_px or None, detect_thin_walls=bool(thin_walls)),
+                    prep=recipe)
     except (ValueError, ImportError) as e:
         raise HTTPException(400, str(e))
     secs = time.time() - t0
