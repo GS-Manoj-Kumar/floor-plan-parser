@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fpvec"
-version = "0.2.0"
+version = "0.3.0"
 description = "Raster floor plan to vector: walls (with thickness), doors (hinge + swing) and windows."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,8 +12,11 @@ license = {text = "MIT"}
 dependencies = ["numpy>=1.22", "opencv-python-headless>=4.6"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "httpx>=0.24"]
 api = ["fastapi>=0.100", "uvicorn>=0.22", "python-multipart>=0.0.6"]
+pdf = ["pypdfium2>=4.20"]
+ocr = ["rapidocr-onnxruntime>=1.2"]
+all = ["fastapi>=0.100", "uvicorn>=0.22", "python-multipart>=0.0.6", "pypdfium2>=4.20", "rapidocr-onnxruntime>=1.2"]
 
 [project.scripts]
 fpvec = "fpvec.cli:main"

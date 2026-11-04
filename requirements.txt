@@ -1,2 +1,5 @@
 numpy>=1.22
 opencv-python-headless>=4.6
+# optional: PDF input and auto scale from dimension text (OCR)
+# pypdfium2>=4.20
+# rapidocr-onnxruntime>=1.2

@@ -8,6 +8,11 @@ Turn a floor plan **image** into **vector walls, doors and windows** that a draw
 * Export formats: **JSON**, **SVG**, **DXF** (layers WALLS / DOORS / WINDOWS / OPENINGS), a debug **overlay PNG**, and a
   **`floor_plan.json` that the Floor Plan editor (`floor_plan.html` / SketchUp dialog) opens directly**: walls, doors and
   windows as real editor objects, with the source image as a 50 % underlay.
+* **PDF input** (any page). Vector PDFs give their dimension text straight from the text layer.
+* **Automatic scale** from the plan's own dimension text: OCR (or the PDF text) reads the numbers, and each one is
+  measured against its dimension line. Units: mm, cm, m or ft-in.
+* **Photo correction** (toggle): photos taken at an angle are de-warped (perspective), evened out (lighting) and
+  straightened (rotation / shear). If the x and y scales still differ, the dimensions fix the aspect ratio.
 * A **demo page** (upload → scale → vectorize → inspect → download), runnable in one click as a **GitHub Codespace**.
 
 Pure Python + OpenCV + NumPy. No GPU and no model weights.
@@ -29,12 +34,16 @@ Port 8000 opens in the browser (if it doesn't, open the **Ports** tab and click 
 The demo page:
 
 1. **Open image…** (or drag a file in, or pick one of the **Examples**).
-2. **Scale.** Choose one:
+2. **Photo correction**: *Auto* (default; only when the image looks like a photo of a sheet), *On* or *Off*.
+   For a PDF, pick the **Page**.
+3. **Scale.** Choose one:
+   * *Auto (read dimensions)* (default): reads the dimension numbers. The ones it used are drawn in purple
+     over the image, with the stretch each one measures. If none are found, it falls back to the wall thickness.
    * *Assume wall thickness*: e.g. 200 mm for the main wall.
    * *Two points + distance*: click two points, then type the real distance (`3600`, `3.6m` or `12'6"`).
    * *mm per pixel*.
-3. **Vectorize.** Walls, doors (with swing) and windows are drawn over the image. Click one, or its table row, to highlight it.
-4. **Download** `floor_plan.json` and open it with the editor's **Open** button. The image comes along as an underlay, so you can check and fix the trace there.
+4. **Vectorize.** Walls, doors (with swing) and windows are drawn over the image. Click one, or its table row, to highlight it.
+5. **Download** `floor_plan.json` and open it with the editor's **Open** button. The image comes along as an underlay, so you can check and fix the trace there.
 
 Locally, the same demo runs with:
 
@@ -43,11 +52,71 @@ pip install -e ".[api]"
 fpvec-demo            # http://localhost:8000
 ```
 
+<img src="docs/demo_photo.png" width="760">
+
+*A phone photo of a printed plan (`examples/synth_photo.jpg`): sheet found, de-warped and straightened, and the scale read
+from the dimensions. The image was 6 % stretched in y, which was detected and fixed. Exterior walls come out at 10 036 × 8 029 mm
+against a true 10 000 × 8 000.*
+
+## Photos, PDFs and automatic scale
+
+```python
+from fpvec import process
+r = process("plan.pdf", page=0, auto_scale=True, photo="auto")   # or an image path / bytes / array
+r.plan            # walls, doors, windows (px of r.image, mm filled in)
+r.image           # the traced image (PDF page rendered, photo corrected)
+r.scale_method    # "given" | "dimensions" | "wall" | "none"
+r.scale.readings  # every dimension read: text, value, measured stretch, used or not
+r.rectify.applied # e.g. ["perspective", "lighting", "rotate", "aspect"]
+```
+
+```bash
+fpvec plan.pdf --page 2 -o out/          # scale read from the dimension text
+fpvec photo.jpg --photo on -o out/       # photo correction forced on
+fpvec plan.png --units ftin -o out/      # plain numbers are inches (12'-6" works anyway)
+```
+
+**Automatic scale** (`autoscale.py`):
+
+1. **Text.** For a PDF, its text layer, which gives exact positions and needs no OCR. Otherwise
+   [RapidOCR](https://github.com/RapidAI/RapidOCR) (Apache-2.0, ONNX models bundled, pip only, reads horizontal and
+   vertical text).
+2. **Parse** each number as a length: `3600` / `3600mm` → mm, `3.60` → m, `360cm`, `12'-6"`, `12'6"`, `150"`. Words and
+   implausible values (under 150 mm or over 60 m) are ignored.
+3. **Dimension line.** Find the long thin line parallel to the text, right next to it and running past both its ends.
+4. **Ticks.** Find the marks crossing that line on each side of the text: 45° slashes, arrows, dots or extension lines.
+   Text sits on one side only, so it is never mistaken for a tick. The stretch between the nearest tick on the left and
+   on the right is what the number measures.
+5. **Consensus.** Each reading gives a mm/px value, and the largest group agreeing within 2.5 % wins. Horizontal and
+   vertical dimensions are also solved on their own. If they disagree (a photo, or a scan stretched by the scanner),
+   the image is stretched so its pixels are square.
+
+**PDF** (`inputs.py`): rendered with [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDFium; Apache-2.0 / BSD) at
+`dpi` (default 200 in the demo and CLI). Coordinates refer to the rendered page, which is also embedded as the editor underlay.
+
+**Photo correction** (`rectify.py`, OpenCV only):
+
+1. **Sheet.** The paper is the large bright region. Its outline is reduced to 4 corners and the perspective is removed.
+2. **Lighting.** The image is divided by a heavily smoothed copy of itself, so shadows and light gradients vanish.
+3. **Straighten.** The two dominant line directions (Hough) are rotated and sheared back to exactly horizontal and vertical.
+4. **Aspect.** A perspective photo does not fully fix the sheet's aspect ratio. When the plan has dimensions, the
+   per-axis scales fix it (step 5 above).
+
+*Auto* applies the correction only when the image looks like a photo: a sheet edge is visible, or the paper is strongly
+uneven. Clean scans and screenshots pass through untouched.
+
+| Test (`tests/test_autoscale.py`) | Result |
+|---|---|
+| Dimensions in mm, OCR | scale exact (12 / 12 dimensions agree) |
+| Dimensions in ft-in, OCR | within 0.1 % (labels are rounded to the inch) |
+| PDF with a text layer / scanned PDF (OCR), 72–300 dpi | scale exact |
+| Photos: tilt up to 0.18, rotation up to 25°, uneven light, JPEG | exterior walls within 1.5 % (typically 0.3–0.5 %), 5/5 windows, ≥ 4/5 doors |
+
 ## Install
 
 ```bash
 pip install -r requirements.txt        # numpy + opencv-python-headless
-pip install -e .                       # optional: installs the `fpvec` command
+pip install -e ".[all]"                # + PDF (pypdfium2), OCR (rapidocr-onnxruntime), demo server
 ```
 
 ## Use
@@ -191,6 +260,11 @@ edge) still comes through as short walls or windows. That image is a 412 px wide
 
 * Walls are assumed **axis-aligned** (horizontal/vertical), which covers almost all residential plans. Diagonal and curved walls are not extracted yet.
 * **Sliding doors** are drawn like windows and come out as `window`. **Bay windows** (飘窗) come out as a window plus short walls.
+* Auto scale needs printed dimension numbers with dimension lines. Plans with only room areas or a scale bar fall
+  back to the wall-thickness assumption (scale bars are not read yet). Very small images may give OCR nothing to read:
+  the 412 px sample does, for example.
+* Photo correction needs the sheet's corners in view for the perspective step. Without them it still evens out the
+  lighting and straightens the drawing. Strong lens distortion (wide-angle, close up) is not corrected.
 * Heavily stylised marketing plans (coloured floors, 3D furniture, photos) may need `Params(ink_threshold=...)`, or a learned wall mask (see `docs/reference_repos.md`).
 * Main knobs (`fpvec.Params`): `wall_thickness_px` (override the estimate), `detect_thin_walls`, `min_opening_mm` / `max_opening_mm`, `door_score`, `merge_across_openings`.
 
@@ -210,6 +284,10 @@ fpvec/
   export.py      JSON, SVG, DXF, overlay PNG
   scale.py       mm-per-px from a reference distance or wall thickness
   floorplan_doc.py  export to the Floor Plan editor document (floor_plan.json)
+  process.py     one call: load (image / PDF) -> photo correction -> auto scale -> vectorize
+  inputs.py      image / PDF loading (pypdfium2), PDF text layer
+  autoscale.py   dimension text -> scale (OCR, parsing, dimension lines, ticks, consensus)
+  rectify.py     photo correction: sheet perspective, lighting, rotation / shear, aspect
   web/index.html    demo page (served by api.py)
   synth.py       synthetic plans with ground truth
   cli.py         command line

@@ -1,7 +1,7 @@
 {
   "name": "fpvec (floor plan vectorizer)",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "postCreateCommand": "pip install --upgrade pip && pip install -e '.[api,dev]'",
+  "postCreateCommand": "pip install --upgrade pip && pip install -e '.[all,dev]'",
   "postAttachCommand": {
     "demo": "fpvec-demo --port 8000"
   },
