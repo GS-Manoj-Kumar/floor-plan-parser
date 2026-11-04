@@ -97,7 +97,7 @@ tools are in the bar under them, and its settings are on the right.
 | **3 Scale** | *Read from the plan* (dimensions or room areas, with a wall-thickness fallback), *Wall thickness*, *Two points* (click two points, type the distance), or *mm per pixel* |
 | **4 Prepare** | The **image sliders** are in the bar at the top: black & white, pure black / white, *darken lines* (0–250), *whiten background* (0–250), *boost thin lines*. The preview updates live, and both sliders go far enough to wipe out any background. Pick a **preset** on the right, or **save your own** (name, *Default* = used for every new image, delete). Remove or blur areas with the brush (size slider), rectangle or polygon. **Mark walls**: draw polylines along walls (see below) |
 | **5 Detect** | Choose **what to detect**: everything; walls, doors and windows; walls and openings (every gap as a plain opening); or walls only. Then run the tracer. The other detection settings are on the right (see *Tuning*) |
-| **6 Edit** | The selected item's properties stay pinned at the top of the right panel, and its row scrolls into view. Fix the result: select, move and delete walls (joined walls follow), drag a wall's round end handles, slide doors and windows along their wall and resize them, change their type, add walls / doors / windows / openings, set lengths and thicknesses in mm. Undo / redo |
+| **6 Edit** | The selected item's properties stay pinned at the top of the right panel, and its row scrolls into view. Fix the result: select, move and delete walls (joined walls follow), drag a wall's round end handles, slide doors and windows along their wall and resize them, change their type, add walls / doors / windows / openings, set lengths and thicknesses in mm. **Lasso** (L): draw a loop to select many items (Shift adds, Shift+click adds or removes one, Ctrl+A selects all), then drag them together, delete them, or set thickness / exterior for all selected walls. **Tidy walls**: ortho, join wall ends, allowed wall thicknesses. Undo / redo |
 | **7 Floor plan** | Your Floor Plan editor, **inside the page**. The edited result is loaded automatically into an empty editor. **Load result** replaces the drawing and **Add to drawing** adds it to the current level. **Save** / **Open saved…** keep drawings in the `projects/` folder of this project (no download / re-open). Downloads: `floor_plan.json`, DXF, SVG |
 
 Doors are drawn as yellow blocks, windows as blue blocks and plain openings as green outlines. The door swing still
@@ -147,13 +147,15 @@ Detection settings (*Detect* step, `fpvec/presets.py` → `TUNING`; Python: `Par
 | `min_opening_mm` / `max_opening_mm` | 450 / 4500 | Narrowest / widest door or window |
 | `min_wall_t` | 1.6 | Shortest solid wall piece, in wall thicknesses (removes blobs and stubs) |
 | `wall_thickness_px` | auto | Override the measured wall thickness |
+| `wall_thicknesses` | – | Allowed wall thicknesses in mm: a range `100-250` (every wall is kept inside it) or a list `100, 150, 230` (every wall gets the nearest value). Without a scale the main wall is assumed to be the allowed value nearest 200 mm |
 | `ortho` | on | Every wall exactly horizontal or vertical; walls nearly on one line (within half a thickness) are put on that line |
 | `snap_ends` | on | Join wall ends: a loose end is extended to the nearest wall within `snap_dist` – straight on across a gap (with *walls only* this closes doorways), into a wall it runs at (T), or to meet a nearby wall end (L corner). Ends poking past a wall by up to one thickness are trimmed |
 | `snap_dist` / `snap_unit` | 3 / t | Join distance; unit `t` = multiples of the wall thickness, `pct` = % of the plan's larger side, `mm` = millimetres (uses the scale; without one a 200 mm wall is assumed) |
 
 The same tidy step is in **6 Edit → Tidy walls** (ortho, join distance and unit, *Tidy walls* button; undo works), and
 the **Ortho** button in the Edit toolbar keeps new and dragged walls horizontal / vertical (Shift does the opposite).
-In Python: `from fpvec.tidy import tidy; tidy(plan, ortho=True, snap=True, snap_dist=3, snap_unit="t")`.
+In Python: `from fpvec.tidy import tidy, match_thickness; tidy(plan, ortho=True, snap=True, snap_dist=3, snap_unit="t")`,
+`match_thickness(plan, "100, 150, 230")`.
 
 ## Preparation step (clean the image before tracing)
 
@@ -303,7 +305,7 @@ save_floorplan_doc(plan, "plan_floor_plan.json", image_path="plan.png")
 
 The demo uses a session API: `POST /api/load` (file, page, photo → token + corrected image), `/api/prepare` (token, prep →
 prepared image), `/api/detect` (token, prep, tuning, hints, scale fields → result), `/api/export` (edited plan JSON →
-editor document, DXF, SVG), `/api/tidy` (plan, ortho, snap, snap_dist, snap_unit → tidied plan), `GET /api/presets`, and `GET/POST/DELETE /api/projects[/name]` for saved drawings. The one-shot endpoint below still works.
+editor document, DXF, SVG), `/api/tidy` (plan, ortho, snap, snap_dist, snap_unit, wall_thicknesses → tidied plan), `GET /api/presets`, and `GET/POST/DELETE /api/projects[/name]` for saved drawings. The one-shot endpoint below still works.
 
 ```bash
 pip install -e ".[api]"
@@ -449,3 +451,10 @@ scripts/build_site.py   static results site for GitHub Pages
 .devcontainer/   Codespace: installs, starts the demo on port 8000
 docs/reference_repos.md   review of the six reference repos
 ```
+
+## License
+
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later), see [LICENSE](LICENSE). If you run a modified
+version as a network service (for example the demo server), you must offer its users the source of that version.
+The libraries fpvec uses (OpenCV, NumPy, FastAPI, pypdfium2, RapidOCR, …) are under permissive licenses that are
+compatible with the AGPL.

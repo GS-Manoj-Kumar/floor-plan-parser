@@ -18,13 +18,18 @@
   Overshooting ends (a wall poking past the wall it meets by up to one
   thickness) are trimmed back to it.
 
+Wall thickness: ``match_thickness(plan, "100-250")`` clamps every wall into a
+range, ``match_thickness(plan, "100, 150, 230")`` sets each to the nearest
+listed value (mm).
+
 Openings stay on their wall: after tidying they are re-hosted on the wall
 they now sit on.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -215,3 +220,59 @@ def loose_ends(plan: FloorPlan) -> int:
     """How many wall ends touch no other wall (diagonal walls are skipped)."""
     segs = [s for s in (_to_seg(w, False) for w in plan.walls) if s.o != "d"]
     return sum(not _connected(s, e, segs) for s in segs for e in ("a", "b"))
+
+
+def parse_thicknesses(spec) -> Optional[Tuple[str, List[float]]]:
+    """Allowed wall thicknesses (mm) from the user's input.
+
+    "100-250" / "100 to 250" / "100..250" -> ("range", [100, 250]);
+    "100, 150, 230" / "100 150 230" / [100, 150] -> ("list", [100, 150, 230]).
+    Empty or unreadable -> None."""
+    if spec is None:
+        return None
+    if isinstance(spec, (list, tuple)):
+        vals = sorted(float(v) for v in spec if float(v) > 0)
+        return ("list", vals) if vals else None
+    s = str(spec).strip().lower().replace("mm", "")
+    if not s:
+        return None
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:-|–|to|\.\.)\s*(\d+(?:\.\d+)?)\s*", s)
+    if m:
+        lo, hi = sorted((float(m.group(1)), float(m.group(2))))
+        return ("range", [lo, hi]) if hi > 0 else None
+    vals = sorted({float(v) for v in re.findall(r"\d+(?:\.\d+)?", s) if float(v) > 0})
+    return ("list", vals) if vals else None
+
+
+def _fit_mm(ts, mm: float) -> float:
+    kind, vals = ts
+    return min(max(mm, vals[0]), vals[1]) if kind == "range" else min(vals, key=lambda v: abs(v - mm))
+
+
+def assumed_wall_mm(spec, wall_mm: float = 200.0) -> float:
+    """The main wall thickness to assume when there is no scale: 200 mm, or
+    the allowed value nearest to it."""
+    ts = parse_thicknesses(spec)
+    return _fit_mm(ts, wall_mm) if ts else wall_mm
+
+
+def match_thickness(plan: FloorPlan, spec) -> FloorPlan:
+    """Set every wall's thickness to the nearest allowed value: the nearest
+    one in a list, or clamped into a range (mm; without a scale a 200 mm
+    main wall is assumed). Openings take their wall's new thickness."""
+    ts = parse_thicknesses(spec)
+    if ts is None or not plan.walls:
+        return plan
+    t_main = plan.wall_thickness_px or float(np.median([w.thickness for w in plan.walls]))
+    k = plan.mm_per_px or (assumed_wall_mm(spec) / t_main)
+
+    def fit(t_px: float) -> float:
+        return _fit_mm(ts, t_px * k) / k
+
+    walls = [Wall(w.id, w.start, w.end, fit(w.thickness), w.orientation, w.exterior) for w in plan.walls]
+    ops = []
+    for o in plan.openings:
+        t = walls[o.host_wall_ids[0]].thickness if o.host_wall_ids and o.host_wall_ids[0] < len(walls) else o.thickness
+        ops.append(Opening(o.id, o.kind, o.start, o.end, t, o.orientation, list(o.host_wall_ids), o.confidence,
+                           o.hinge, o.swing_side, o.double))
+    return FloorPlan(plan.image_size, walls, ops, plan.mm_per_px, plan.wall_thickness_px, plan.line_width_px)

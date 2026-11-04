@@ -70,6 +70,10 @@ TUNING = {
                    "default": 1.6, "help": "Shorter solid pieces are ignored (removes blobs and stubs)."},
     "wall_thickness_px": {"label": "Wall thickness (px)", "type": "number", "default": None,
                           "help": "Leave empty to measure it automatically."},
+    "wall_thicknesses": {"label": "Wall thicknesses (mm)", "type": "text", "default": "",
+                         "placeholder": "e.g. 100-250 or 100, 150, 230",
+                         "help": "Allowed wall thicknesses: a range (every wall is kept inside it) or a list (every "
+                                 "wall gets the nearest value). Empty = as measured."},
     "ortho": {"label": "Ortho walls", "type": "bool", "default": True,
               "help": "Make every wall exactly horizontal or vertical and put nearly-aligned walls on one line."},
     "snap_ends": {"label": "Join wall ends", "type": "bool", "default": True,
@@ -84,6 +88,13 @@ TUNING = {
 }
 
 
+def spec_ok(k: str, v) -> bool:
+    if k == "wall_thicknesses":
+        from .tidy import parse_thicknesses
+        return parse_thicknesses(v) is not None
+    return True
+
+
 def tuning_params(t: dict) -> dict:
     """Keep only known tuning keys with sensible types."""
     out = {}
@@ -93,6 +104,9 @@ def tuning_params(t: dict) -> dict:
             continue
         if spec["type"] == "bool":
             out[k] = bool(v)
+        elif spec["type"] == "text":
+            if spec_ok(k, v):
+                out[k] = str(v).strip()
         elif spec["type"] == "choice":
             if v in spec["choices"]:
                 out[k] = v

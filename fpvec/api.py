@@ -48,7 +48,7 @@ from .presets import DEFAULT_PRESET, PRESETS, TUNING, tuning_params
 from .pipeline import Params, vectorize
 from .process import process
 from .rectify import correct_photo
-from .tidy import loose_ends, tidy
+from .tidy import loose_ends, match_thickness, parse_thicknesses, tidy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -262,10 +262,12 @@ async def api_export(plan: str = Form(...), token: Optional[str] = Form(None)):
 
 @app.post("/api/tidy")
 async def api_tidy(plan: str = Form(...), ortho: bool = Form(True), snap: bool = Form(True),
-                   snap_dist: float = Form(3.0), snap_unit: str = Form("t")):
+                   snap_dist: float = Form(3.0), snap_unit: str = Form("t"),
+                   wall_thicknesses: Optional[str] = Form(None)):
     """Tidy an (edited) plan: ortho walls and join wall ends within
     ``snap_dist`` (unit "t" = wall thicknesses, "pct" = % of the plan size,
-    "mm")."""
+    "mm"). ``wall_thicknesses`` (mm, "100-250" or "100, 150, 230") sets
+    every wall to the nearest allowed thickness."""
     d = _json_form(plan, "plan")
     if not isinstance(d, dict) or "walls" not in d:
         raise HTTPException(400, "plan must be fpvec JSON with walls and openings")
@@ -273,6 +275,10 @@ async def api_tidy(plan: str = Form(...), ortho: bool = Form(True), snap: bool =
         raise HTTPException(400, "snap_unit must be t, pct or mm")
     fp = plan_from_dict(d)
     out = tidy(fp, ortho=ortho, snap=snap, snap_dist=max(0.0, snap_dist), snap_unit=snap_unit)
+    if wall_thicknesses and wall_thicknesses.strip():
+        if parse_thicknesses(wall_thicknesses) is None:
+            raise HTTPException(400, "wall thicknesses: give a range like 100-250 or a list like 100, 150, 230")
+        out = match_thickness(out, wall_thicknesses)
     return _plain({"plan": out.to_dict(), "loose_before": loose_ends(fp), "loose_after": loose_ends(out)})
 
 

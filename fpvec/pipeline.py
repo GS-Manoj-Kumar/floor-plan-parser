@@ -12,7 +12,7 @@ from .models import FloorPlan, Opening, Wall
 from .doors import DoorArc, find_doors, soft_thin_mask
 from .openings import Gap, classify_gap, find_gaps
 from .preprocess import ImageLike, binarize, estimate_stroke_widths, load_gray
-from .tidy import tidy
+from .tidy import match_thickness, tidy
 from .thinlines import _texture, detect_line_bands, keep_connected
 from .walls import Seg, _runs, extract_segments, merge_collinear, snap_junctions, wall_mask
 
@@ -51,6 +51,7 @@ class Params:
     ortho: bool = True
     snap_ends: bool = True
     snap_dist: float = 3.0
+    wall_thicknesses: Optional[str] = None   # allowed wall thicknesses (mm): "100-250" or "100, 150, 230"
     snap_unit: str = "t"                # "t" = x wall thickness, "pct" = % of plan size, "mm"
 
 
@@ -282,6 +283,8 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
                      mm_per_px=mm_per_px, wall_thickness_px=T * inv, line_width_px=line_w * inv)
     if p.ortho or p.snap_ends:
         plan = tidy(plan, ortho=p.ortho, snap=p.snap_ends, snap_dist=p.snap_dist, snap_unit=p.snap_unit)
+    if p.wall_thicknesses:
+        plan = match_thickness(plan, p.wall_thicknesses)
     return plan
 
 

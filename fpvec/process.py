@@ -38,6 +38,7 @@ from .models import FloorPlan
 from .pipeline import Params, vectorize
 from .prepare import apply_prep, describe, is_identity
 from .rectify import RectifyInfo, correct_photo, fix_aspect
+from .tidy import assumed_wall_mm, match_thickness
 
 
 @dataclass
@@ -146,6 +147,9 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
     # black-and-white drawings, where it keeps anti-aliasing out
     params.degraded = params.degraded or bool(rinfo.applied) or colourful
     plan = vectorize(img, mm_per_px, params)
+    scaled = bool(plan.mm_per_px)
+    if params.wall_thicknesses and wall_mm:
+        wall_mm = assumed_wall_mm(params.wall_thicknesses, wall_mm)
     if not plan.mm_per_px and auto_scale and boxes_for_areas:
         ar = scale_from_areas(plan, img.shape, boxes_for_areas)
         if ar.mm_per_px:
@@ -158,6 +162,8 @@ def process(src: Source, mm_per_px: Optional[float] = None, auto_scale: bool = T
         method = "wall"
         notes.append(f"scale assumed from a {wall_mm:g} mm main wall")
     scale.mm_per_px = plan.mm_per_px
+    if params.wall_thicknesses and plan.mm_per_px and not scaled:
+        plan = match_thickness(plan, params.wall_thicknesses)     # again, with the scale found after tracing
     res = ProcessResult(plan, img, scale, method, rinfo, li.kind, li.page, li.pages, notes)
     res.base = base
     return res

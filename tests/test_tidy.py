@@ -82,3 +82,46 @@ def test_tuning_has_tidy_keys():
     from fpvec.presets import tuning_params
     assert tuning_params({"ortho": False, "snap_ends": True, "snap_dist": "4", "snap_unit": "pct"}) == \
         {"ortho": False, "snap_ends": True, "snap_dist": 4.0, "snap_unit": "pct"}
+
+
+def test_parse_thicknesses():
+    from fpvec.tidy import parse_thicknesses
+    assert parse_thicknesses("100-250") == ("range", [100.0, 250.0])
+    assert parse_thicknesses("250 to 100 mm") == ("range", [100.0, 250.0])
+    assert parse_thicknesses("230, 100,150") == ("list", [100.0, 150.0, 230.0])
+    assert parse_thicknesses("100 150") == ("list", [100.0, 150.0])
+    assert parse_thicknesses("") is None and parse_thicknesses("abc") is None
+
+
+def test_match_thickness_list_and_range():
+    from fpvec.tidy import match_thickness
+    walls = [W(0, (100, 100), (400, 100), t=4.0), W(1, (100, 100), (100, 400), t=9.0), W(2, (400, 100), (400, 400), t=30.0)]
+    op = Opening(0, "door", (100, 200), (100, 260), 9.0, "v", [1])
+    p = plan(walls, [op], mm=20.0)                      # 80, 180, 600 mm
+    out = match_thickness(p, "100, 150, 230")
+    assert [round(w.thickness * 20) for w in out.walls] == [100, 150, 230]
+    assert round(out.openings[0].thickness * 20) == 150
+    out = match_thickness(p, "100-250")
+    assert [round(w.thickness * 20) for w in out.walls] == [100, 180, 250]
+    assert match_thickness(p, "") is p
+
+
+def test_thickness_in_params_and_api():
+    from fpvec.presets import tuning_params
+    assert tuning_params({"wall_thicknesses": " 100-250 "}) == {"wall_thicknesses": "100-250"}
+    assert tuning_params({"wall_thicknesses": "abc"}) == {}
+    p = plan([W(0, (100, 100), (400, 100), t=4.0)], mm=20.0)
+    c = TestClient(app)
+    r = c.post("/api/tidy", data={"plan": json.dumps(p.to_dict()), "wall_thicknesses": "100, 200"})
+    assert r.status_code == 200 and round(r.json()["plan"]["walls"][0]["thickness_px"] * 20) == 100
+    assert c.post("/api/tidy", data={"plan": json.dumps(p.to_dict()), "wall_thicknesses": "x"}).status_code == 400
+
+
+def test_process_with_thicknesses():
+    import cv2
+    from fpvec.pipeline import Params
+    from fpvec.process import process
+    img = cv2.imread("examples/sample_plan.png")
+    res = process(img, auto_scale=False, params=Params(items="walls", wall_thicknesses="100, 230"))
+    vals = {round(w.thickness * res.plan.mm_per_px) for w in res.plan.walls}
+    assert vals <= {100, 230}, vals
