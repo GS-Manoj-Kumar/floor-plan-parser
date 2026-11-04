@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
+from collections import OrderedDict
 import os
 import tempfile
 import time
@@ -40,6 +42,9 @@ from .autoscale import ocr_available
 from .export import to_dxf, to_svg
 from .floorplan_doc import to_floorplan_doc
 from .inputs import load_input, pdf_available
+from .models import plan_from_dict
+from .prepare import apply_prep, is_identity
+from .presets import DEFAULT_PRESET, PRESETS, TUNING, tuning_params
 from .pipeline import Params, vectorize
 from .process import process
 from .rectify import correct_photo
@@ -49,7 +54,7 @@ ROOT = os.path.dirname(HERE)
 EXAMPLES = os.path.join(ROOT, "examples")
 MAX_BYTES = 25 * 1024 * 1024
 
-app = FastAPI(title="fpvec", version="0.3.0")
+app = FastAPI(title="fpvec", version="0.5.0")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -152,7 +157,130 @@ async def api_vectorize(file: UploadFile = File(...), mm_per_px: Optional[float]
 
 @app.get("/api/capabilities")
 def capabilities():
-    return {"ocr": ocr_available(), "pdf": pdf_available()}
+    return {"ocr": ocr_available(), "pdf": pdf_available(), "editor": _editor_path() is not None}
+
+
+# ------------------------------------------------------------------ v0.5: session API
+# load once (render PDF page, correct the photo), then preview the
+# preparation, detect and export by token without re-uploading.
+_SESS: "OrderedDict[str, dict]" = OrderedDict()
+_SESS_MAX = 12
+
+
+def _sess(token: str) -> dict:
+    s = _SESS.get(token)
+    if s is None:
+        raise HTTPException(404, "image expired - open it again")
+    _SESS.move_to_end(token)
+    return s
+
+
+def _json_form(v: Optional[str], what: str):
+    if not v:
+        return None
+    try:
+        return json.loads(v)
+    except ValueError:
+        raise HTTPException(400, f"{what} must be JSON")
+
+
+@app.post("/api/load")
+async def api_load(file: UploadFile = File(...), page: int = Form(1), dpi: float = Form(200),
+                   photo: str = Form("auto")):
+    raw = await _read(file)
+    try:
+        li = load_input(raw, page=max(0, page - 1), dpi=dpi)
+    except (ValueError, ImportError) as e:
+        raise HTTPException(400, str(e))
+    img, info = correct_photo(li.image, photo)
+    moved = any(a in info.applied for a in ("perspective", "rotate", "shear"))
+    token = uuid.uuid4().hex
+    _SESS[token] = dict(image=img, text=None if moved else li.text, kind=li.kind, page=li.page, pages=li.pages,
+                        rectify=info, name=file.filename or "plan")
+    while len(_SESS) > _SESS_MAX:
+        _SESS.popitem(last=False)
+    return _plain({"token": token, "image": _img_url(img), "kind": li.kind, "page": li.page + 1, "pages": li.pages,
+                   "size_px": [int(img.shape[1]), int(img.shape[0])], "rectify": info.to_dict()})
+
+
+@app.post("/api/prepare")
+async def api_prepare(token: str = Form(...), prep: Optional[str] = Form(None)):
+    s = _sess(token)
+    recipe = _json_form(prep, "prep")
+    img = apply_prep(s["image"], recipe) if recipe and not is_identity(recipe) else s["image"]
+    return {"image": _img_url(img)}
+
+
+@app.post("/api/detect")
+async def api_detect(token: str = Form(...), prep: Optional[str] = Form(None), tuning: Optional[str] = Form(None),
+                     hints: Optional[str] = Form(None), mm_per_px: Optional[float] = Form(None),
+                     auto_scale: int = Form(1), wall_mm: Optional[float] = Form(200), units: str = Form("auto")):
+    s = _sess(token)
+    recipe = _json_form(prep, "prep")
+    t = tuning_params(_json_form(tuning, "tuning") or {})
+    marks = _json_form(hints, "hints") or None
+    t0 = time.time()
+    params = Params(**t)
+    params.hints = marks
+    r = process(s["image"], mm_per_px=mm_per_px or None, auto_scale=bool(auto_scale), photo="off", units=units,
+                wall_mm=wall_mm or None, params=params, prep=recipe, text=s["text"], rectify=s["rectify"])
+    s["base"] = r.base
+    out = r.to_dict()
+    out["input"].update({"kind": s["kind"], "page": s["page"] + 1, "pages": s["pages"]})
+    out.update(_exports(r.plan, s))
+    out.update({"image": _img_url(r.image), "base": _img_url(r.base) if r.base is not r.image else None,
+                "seconds": round(time.time() - t0, 2)})
+    return _plain(out)
+
+
+def _exports(plan, s: Optional[dict]) -> dict:
+    under = s.get("base") if s else None
+    doc = to_floorplan_doc(plan, image_data_url=_img_url(under) if under is not None else None)
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "plan.dxf")
+        to_dxf(plan, p)
+        with open(p, encoding="ascii") as f:
+            dxf = f.read()
+    return {"floorplan": doc, "dxf": dxf, "svg": to_svg(plan, units="mm" if plan.mm_per_px else "px")}
+
+
+@app.post("/api/export")
+async def api_export(plan: str = Form(...), token: Optional[str] = Form(None)):
+    """Export a plan the user edited in the demo (fpvec JSON, px) to the
+    Floor Plan editor document, DXF and SVG. Openings are re-hosted on the
+    walls they now sit on."""
+    d = _json_form(plan, "plan")
+    if not isinstance(d, dict) or "walls" not in d:
+        raise HTTPException(400, "plan must be fpvec JSON with walls and openings")
+    fp = plan_from_dict(d)
+    s = _SESS.get(token) if token else None
+    out = _exports(fp, s)
+    out["plan"] = fp.to_dict()
+    return _plain(out)
+
+
+@app.get("/api/presets")
+def api_presets():
+    return {"presets": PRESETS, "default": DEFAULT_PRESET, "tuning": TUNING}
+
+
+def _editor_path() -> Optional[str]:
+    for p in (os.environ.get("FPVEC_EDITOR"), os.path.join(ROOT, "editor", "floor_plan.html")):
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
+@app.get("/editor", response_class=HTMLResponse)
+def editor():
+    """Serves your Floor Plan editor (floor_plan.html) on the same address as
+    the demo, so "Promote" can hand it the traced plan."""
+    p = _editor_path()
+    if not p:
+        raise HTTPException(404, "Floor Plan editor not found: copy floor_plan.html to editor/floor_plan.html "
+                                 "(or set FPVEC_EDITOR to its path) and restart")
+    with open(p, encoding="utf-8") as f:
+        return f.read()
 
 
 # backwards compatible endpoint (v0.1)

@@ -67,13 +67,13 @@ against a true 10 000 × 8 000.*
 
 `samples/` holds 15 generated coloured floor plans in five drawing styles: sales plan, wood floors, blue walls, grey
 partitions and brown walls. They have textured floors, furniture, room labels with areas, and dimensions in mm or
-ft-in (or none). Each plan is stored clean and distorted (a phone photo at an angle, or a crooked yellowed scan),
+ft-in (or none). They are run with the default preset. Each plan is stored clean and distorted (a phone photo at an angle, or a crooked yellowed scan),
 with exact ground truth. `python samples/run_samples.py` runs fpvec on all 30 and scores them (`fpvec/evaluate.py`):
 
 | Set | Scale found automatically | Median size error | Walls found | Wall precision | Doors found | Windows found |
 |---|---|---|---|---|---|---|
-| Clean (15) | 15 / 15 (11 dimensions, 4 room areas) | 0.12 % | 100 % | 93 % | 88 % | 98 % |
-| Distorted (15) | 14 / 15 (11 dimensions, 3 room areas) | 0.28 % | 96 % | 98 % | 75 % | 91 % |
+| Clean (15) | 15 / 15 (11 dimensions, 4 room areas) | 0.11 % | 100 % | 94 % | 88 % | 96 % |
+| Distorted (15) | 14 / 15 (11 dimensions, 3 room areas) | 0.31 % | 96 % | 100 % | 78 % | 91 % |
 
 Walls are scored as the share of true wall length matched within 150 mm, after fitting the overall size. Doors and
 windows count when their centre is within 350 mm of a true one. Per-plan results with overlays are in
@@ -85,6 +85,67 @@ which `.github/workflows/pages.yml` rebuilds on every push to `main`.
 * Wood-plank floors, which still produce some false wall pieces: wall precision is 67–83 % on 5 of the 30 images (wood and brown-wall styles).
 * One distorted plan (09) whose partitions were partly missed, so its rooms did not close and the room-area scale could not be used.
 
+## The demo: open → correct → scale → prepare → detect → edit → promote
+
+`fpvec-demo` (or the Codespace) opens a step-by-step page. The numbered steps run along the top, the current step's
+tools are in the bar under them, and its settings are on the right.
+
+| Step | What you do |
+|---|---|
+| **1 Open** | An image, a phone photo or a PDF page (pick the page) |
+| **2 Correct** | Photo correction *Auto / On / Off*: perspective, lighting, rotation. Hold *as uploaded* to compare |
+| **3 Scale** | *Read from the plan* (dimensions or room areas, with a wall-thickness fallback), *Wall thickness*, *Two points* (click two points, type the distance), or *mm per pixel* |
+| **4 Prepare** | Pick a **preset**, or set black & white, *darken lines*, *whiten background* and *boost thin lines* yourself. Remove or blur areas with the brush, rectangle or polygon. **Mark walls**: draw polylines along walls (see below) |
+| **5 Detect** | Run the tracer. The detection settings are on the right (see *Tuning*) |
+| **6 Edit** | Fix the result: select, move and delete walls (joined walls follow), drag a wall's round end handles, slide doors and windows along their wall and resize them, change their type, add walls / doors / windows / openings, set lengths and thicknesses in mm. Undo / redo |
+| **7 Promote** | Open the edited plan in the Floor Plan editor, or download `floor_plan.json`, DXF, SVG or fpvec JSON |
+
+Doors are drawn as yellow blocks, windows as blue blocks and plain openings as green outlines. The door swing still
+goes into the editor document (hinge side and direction).
+
+**Promote → Floor Plan editor.** Copy your `floor_plan.html` to `editor/floor_plan.html` (it is git-ignored, see
+`editor/README.md`) and restart `fpvec-demo`. *Open in Floor Plan editor* then opens it at `/editor` with the edited plan
+already loaded: walls, doors and windows as editor objects, with the corrected image as an underlay. Save it there as
+usual. Without the editor file, *Promote* downloads `floor_plan.json` for the editor's *Open*.
+
+### Mark walls (tell the tracer where to look)
+
+The opposite of removing an area. In *Prepare*, choose **Mark walls** and click along a wall, one click per corner.
+Segments stay horizontal / vertical (hold Shift for any angle) and snap to the points of other marks. Type a length
+and press Enter to place the next point exactly: `3600`, `3.6m` or `12'6"` (needs a known scale), or pixels without
+one. Double-click or press Enter to finish. Lengths are shown on each segment.
+
+Each segment is fitted to the ink under it: its centreline and thickness come from the dark band across the line, and it
+is split where the ink stops for more than ~1.5 wall thicknesses, so doors and windows in a marked wall are still found.
+A mark over blank paper becomes a wall exactly as drawn. On the double-line test plan, marking the four partitions
+raised interior-wall recall from 72 % to 95 %. In Python: `Params(hints=[[[x, y], [x, y], ...], ...])`.
+
+### Presets and tuning
+
+| Preset | Preparation | When |
+|---|---|---|
+| **Black & white (recommended)**, default | B&W, darken 110, whiten 210 | Most plans. Best overall on the 33-image test set |
+| Faint / grey lines | B&W, darken 130, whiten 225, thin-line boost 15, sensitive | Light, washed-out drawings |
+| Colour plan, textured floors | B&W, darken 110, whiten 195 | Wood / tile floors |
+| Clean black & white drawing | B&W only, strict | Crisp CAD output |
+| Original | none | The image as it is, in colour |
+
+Preset choice on 33 test images (the 30 sample images plus 3 black-and-white plans), doors / windows found with false ones in brackets:
+none 125 (+7) / 102 (+23); B&W only 119 (+11) / 98 (+30); **B&W, darken 110, whiten 210: 126 (+6) / 101 (+22)**, with the best
+wall precision (97.3 %). Boosting thin lines adds false windows on textured floors, so it is off by default.
+
+Detection settings (*Detect* step, `fpvec/presets.py` → `TUNING`; Python: `Params(...)`; HTTP: `tuning=<JSON>`):
+
+| Setting | Default | Effect |
+|---|---|---|
+| `sensitivity` | auto | Thin / grey line detection: *strict* ignores anti-aliasing and textures, *sensitive* finds light-grey partitions and glazing. *Auto* is sensitive for colour plans and corrected photos, strict otherwise |
+| `plain_openings` | between_walls | Gaps with nothing drawn in them: only where the wall continues on both sides, any gap, or never |
+| `detect_thin_walls` | on | Walls drawn as two thin lines or as a grey band, not only filled ones |
+| `door_score` | 0.6 | Lower finds more doors, and more false ones |
+| `min_opening_mm` / `max_opening_mm` | 450 / 4500 | Narrowest / widest door or window |
+| `min_wall_t` | 1.6 | Shortest solid wall piece, in wall thicknesses (removes blobs and stubs) |
+| `wall_thickness_px` | auto | Override the measured wall thickness |
+
 ## Preparation step (clean the image before tracing)
 
 After the photo correction (perspective, rotation, lighting) and **before** the scale is read and the plan is traced,
@@ -94,6 +155,7 @@ is loaded, and the preview updates live:
 | Control | What it does |
 |---|---|
 | **Black & white** | Colour → grey levels: coloured walls and floors become shades of grey |
+| **Boost thin lines** (0–100) | Darkens only thin strokes (door arcs, window glazing, thin wall outlines), leaving fills alone |
 | **Darken lines** (0–220) | Grey at or below this level becomes pure black: pulls faint / grey walls and partitions to black |
 | **Whiten background** (0–135) | Grey at or above 255 − value becomes pure white: removes light floor colours, wood / tile textures, shading |
 | **Pure black / white** | Every pixel becomes black or white, split halfway between the two levels |
@@ -229,6 +291,10 @@ save_floorplan_doc(plan, "plan_floor_plan.json", image_path="plan.png")
 ```
 
 ### HTTP (for a web/JS front end)
+
+The demo uses a session API: `POST /api/load` (file, page, photo → token + corrected image), `/api/prepare` (token, prep →
+prepared image), `/api/detect` (token, prep, tuning, hints, scale fields → result), `/api/export` (edited plan JSON →
+editor document, DXF, SVG), `GET /api/presets`. The one-shot endpoint below still works.
 
 ```bash
 pip install -e ".[api]"

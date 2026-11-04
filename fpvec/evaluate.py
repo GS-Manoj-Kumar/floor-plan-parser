@@ -27,7 +27,8 @@ def _segs_gt(gt) -> List[dict]:
     out = []
     for w in gt["walls"]:
         (x0, y0), (x1, y1) = w["start"], w["end"]
-        out.append(dict(o=w["o"], a=(x0 * k, y0 * k), b=(x1 * k, y1 * k), ext=w["exterior"]))
+        ext = w["exterior"] if "exterior" in w else w.get("t", 0) >= gt.get("ext_t", 1e9) - 1e-6
+        out.append(dict(o=w["o"], a=(x0 * k, y0 * k), b=(x1 * k, y1 * k), ext=ext))
     return out
 
 

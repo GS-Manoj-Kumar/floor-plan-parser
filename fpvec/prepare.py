@@ -9,6 +9,7 @@ corrected image. A preparation is a small JSON-able recipe:
       "black": 120,               # darken lines: grey at or below this becomes pure black (0..254)
       "white": 225,               # whiten background: grey at or above this becomes pure white (1..255)
       "binary": false,            # pure black / white at the midpoint between the two
+      "lines": 40,                # boost thin lines (door arcs, glazing): 0..100
       "masks": [                  # areas that are not needed, in corrected-image px
         {"type": "brush", "points": [[x, y], ...], "size": 40, "mode": "white"},
         {"type": "rect",  "points": [[x0, y0], [x1, y1]],     "mode": "blur", "blur": 12},
@@ -16,7 +17,7 @@ corrected image. A preparation is a small JSON-able recipe:
       ]
     }
 
-Order: grey levels first (grayscale, black / white points, binary), then the
+Order: grayscale, thin-line boost, grey levels (black / white points, binary), then the
 masks in the order drawn ("white" paints the area white, "blur" blurs it).
 The demo page previews exactly this order.
 """
@@ -27,7 +28,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-DEFAULT = {"grayscale": False, "black": 0, "white": 255, "binary": False, "masks": []}
+DEFAULT = {"grayscale": False, "black": 0, "white": 255, "binary": False, "lines": 0, "masks": []}
 
 
 def normalize(spec: Optional[dict]) -> dict:
@@ -36,13 +37,15 @@ def normalize(spec: Optional[dict]) -> dict:
         s.update({k: v for k, v in spec.items() if k in DEFAULT})
     s["black"] = int(np.clip(s.get("black") or 0, 0, 254))
     s["white"] = int(np.clip(s.get("white") if s.get("white") is not None else 255, s["black"] + 1, 255))
+    s["lines"] = int(np.clip(s.get("lines") or 0, 0, 100))
     s["masks"] = [m for m in (s.get("masks") or []) if isinstance(m, dict) and m.get("points")]
     return s
 
 
 def is_identity(spec: Optional[dict]) -> bool:
     s = normalize(spec)
-    return not s["grayscale"] and s["black"] == 0 and s["white"] == 255 and not s["binary"] and not s["masks"]
+    return (not s["grayscale"] and s["black"] == 0 and s["white"] == 255 and not s["binary"]
+            and not s["lines"] and not s["masks"])
 
 
 def levels_lut(black: int, white: int, binary: bool) -> np.ndarray:
@@ -51,6 +54,20 @@ def levels_lut(black: int, white: int, binary: bool) -> np.ndarray:
         mid = (black + white) / 2.0
         return np.where(v <= mid, 0, 255).astype(np.uint8)
     out = (v - black) * 255.0 / max(1.0, white - black)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def boost_thin_lines(img: np.ndarray, strength: int) -> np.ndarray:
+    """Darken thin strokes only (door arcs, window glazing, thin wall
+    outlines), leaving filled areas and paper as they are.
+
+    A black-hat finds strokes narrower than ~0.6 % of the image and darker
+    than their surroundings; they are darkened by up to 3x their contrast."""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    k = max(5, int(round(max(g.shape) / 160)) | 1)
+    bh = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    gain = 3.0 * strength / 100.0
+    out = img.astype(np.float32) - gain * bh.astype(np.float32)[..., None]
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
@@ -85,6 +102,8 @@ def apply_prep(img: np.ndarray, spec: Optional[dict]) -> np.ndarray:
     if s["grayscale"] or s["binary"]:
         g = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)
         out = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+    if s["lines"]:
+        out = boost_thin_lines(out, s["lines"])
     if s["black"] > 0 or s["white"] < 255 or s["binary"]:
         out = cv2.LUT(out, levels_lut(s["black"], s["white"], s["binary"]))
     else:
@@ -113,6 +132,8 @@ def describe(spec: Optional[dict]) -> str:
         parts.append(f"lines darkened (black at {s['black']})")
     if s["white"] < 255:
         parts.append(f"background whitened (white at {s['white']})")
+    if s["lines"]:
+        parts.append(f"thin lines boosted ({s['lines']})")
     if s["masks"]:
         n_w = sum(m.get("mode", "white") != "blur" for m in s["masks"])
         n_b = len(s["masks"]) - n_w

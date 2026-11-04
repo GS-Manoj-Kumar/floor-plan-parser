@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from fpvec import draw_overlay, process, to_floorplan_doc  # noqa: E402
 from fpvec.evaluate import score  # noqa: E402
+from fpvec.pipeline import Params  # noqa: E402
+from fpvec.presets import DEFAULT_PRESET, PRESETS  # noqa: E402
 from fpvec.synth import make_photo, make_scan  # noqa: E402
 from fpvec.synth_color import make_color_plan  # noqa: E402
 
@@ -43,7 +45,8 @@ def main():
             json.dump(g, f, default=float)
         for variant, im in (("clean", img), (dkind, dist)):
             t = time.time()
-            r = process(im, auto_scale=True, photo="auto", wall_mm=200)
+            pre = PRESETS[DEFAULT_PRESET]
+            r = process(im, auto_scale=True, photo="auto", wall_mm=200, prep=pre["prep"], params=Params(**pre["tuning"]))
             secs = time.time() - t
             sc = score(r.plan, gt)
             stem = f"{name}_{variant}"
@@ -82,7 +85,8 @@ def write_md(rows):
     L = ["# Sample set results", "",
          "15 generated coloured floor plans (5 drawing styles), each as a **clean** image and a **distorted** one",
          "(a phone photo at an angle for odd numbers, a crooked yellowed scan for even numbers). Run with",
-         "`process(image, auto_scale=True, photo=\"auto\", wall_mm=200)`, scored by `fpvec/evaluate.py` against the",
+         "`process(image, auto_scale=True, photo=\"auto\", wall_mm=200)` with the default preset (black & white, darken 110,",
+         "whiten 210), scored by `fpvec/evaluate.py` against the",
          "generator's ground truth. Regenerate with `python samples/run_samples.py`.", "",
          "| Set | Plans | Scale found automatically | Median size error | Wall recall | Wall precision | Walls, shape only (R / P) | Interior wall recall | Doors found | False doors | Windows found | False windows |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]

@@ -121,3 +121,57 @@ class FloorPlan:
 
 
 __all__ = ["Point", "Wall", "Opening", "FloorPlan", "asdict"]
+
+
+def plan_from_dict(d: dict) -> FloorPlan:
+    """Rebuild a FloorPlan from its JSON (``FloorPlan.to_dict``), e.g. after
+    the user edited walls / openings in the demo. Openings are re-hosted on
+    the wall they now sit on (same direction, within its thickness)."""
+    mm = d.get("mm_per_px")
+    walls = []
+    for i, w in enumerate(d.get("walls", [])):
+        a, b = tuple(w["start_px"]), tuple(w["end_px"])
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        o = w.get("orientation") or ("h" if abs(dx) >= abs(dy) else "v")
+        if abs(dx) > 1e-6 and abs(dy) > 1e-6 and min(abs(dx), abs(dy)) / max(abs(dx), abs(dy)) > 0.02:
+            o = "d"
+        walls.append(Wall(i, a, b, float(w.get("thickness_px", 10)), o, bool(w.get("exterior", False))))
+    ops = []
+    for o in d.get("openings", []):
+        a, b = tuple(o["start_px"]), tuple(o["end_px"])
+        op = Opening(len(ops), o.get("type", o.get("kind", "opening")), a, b, float(o.get("thickness_px", 10)),
+                     "h" if abs(b[0] - a[0]) >= abs(b[1] - a[1]) else "v", [], float(o.get("confidence", 1.0)),
+                     tuple(o["hinge_px"]) if o.get("hinge_px") else None, o.get("swing_side"), bool(o.get("double", False)))
+        op.host_wall_ids = _hosts(op, walls)
+        if op.host_wall_ids:
+            op.thickness = walls[op.host_wall_ids[0]].thickness
+        ops.append(op)
+    return FloorPlan(tuple(d.get("image_size_px", (0, 0))), walls, ops, mm,
+                     float(d.get("wall_thickness_px", 0) or 0), float(d.get("line_width_px", 0) or 0))
+
+
+def _hosts(o: "Opening", walls: List[Wall]) -> List[int]:
+    cx, cy = o.center
+    best, bd = None, 1e18
+    for w in walls:
+        (x0, y0), (x1, y1) = w.start, w.end
+        L2 = (x1 - x0) ** 2 + (y1 - y0) ** 2
+        if L2 < 1e-9:
+            continue
+        t = ((cx - x0) * (x1 - x0) + (cy - y0) * (y1 - y0)) / L2
+        L = L2 ** 0.5
+        # the opening may sit just past the wall's end (the export runs the wall on through it)
+        past = max(0.0, -t, t - 1.0) * L
+        if past > o.width:
+            continue
+        px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+        d = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+        # the opening must run along the wall
+        ux, uy = (x1 - x0) / L2 ** 0.5, (y1 - y0) / L2 ** 0.5
+        ox, oy = o.end[0] - o.start[0], o.end[1] - o.start[1]
+        ol = (ox * ox + oy * oy) ** 0.5 or 1
+        if abs(ux * ox + uy * oy) / ol < 0.9:
+            continue
+        if d <= max(w.thickness, o.thickness) * 1.2 and d + past < bd:
+            best, bd = w.id, d + past
+    return [best] if best is not None else []

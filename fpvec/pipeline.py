@@ -13,7 +13,7 @@ from .doors import DoorArc, find_doors, soft_thin_mask
 from .openings import Gap, classify_gap, find_gaps
 from .preprocess import ImageLike, binarize, estimate_stroke_widths, load_gray
 from .thinlines import _texture, detect_line_bands, keep_connected
-from .walls import Seg, extract_segments, merge_collinear, snap_junctions, wall_mask
+from .walls import Seg, _runs, extract_segments, merge_collinear, snap_junctions, wall_mask
 
 
 @dataclass
@@ -31,6 +31,16 @@ class Params:
     degraded: bool = False             # photo / scan (set by process()): more sensitive thin-line detection
     max_opening_mm: Optional[float] = 4500.0  # used instead of max_opening_t when scale is known
     min_opening_mm: Optional[float] = 450.0
+    # plain openings (a gap with no door or window drawn in it):
+    # "between_walls" = only where the same wall continues on both sides,
+    # "all" = any gap, "off" = never
+    plain_openings: str = "between_walls"
+    sensitivity: str = "auto"          # thin / grey line detection: "auto", "strict" or "sensitive"
+    min_wall_t: float = 1.6            # shortest wall piece, in wall thicknesses
+    # user-drawn wall marks: polylines [[x, y], ...] in original-image px.
+    # Each segment becomes a wall fitted to the ink under it (split at gaps,
+    # so doors / windows in it are still found); with no ink it is kept as drawn.
+    hints: Optional[list] = None
 
 
 def _remove_border_frame(ink: np.ndarray) -> None:
@@ -112,12 +122,19 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
 
     # ---------------------------------------------------------------- walls
     solid = wall_mask(ink, T, fill_hollow=False, line_w=line_w)
-    segs = extract_segments(solid, T)
+    segs = extract_segments(solid, T, min_len_factor=p.min_wall_t)
+    hint_segs: List[Seg] = []
+    if p.hints:
+        hint_segs = hint_walls(p.hints, s, ink, solid, T)
+        # a hint replaces the detected pieces it runs along
+        segs = [g for g in segs if not any(_overlaps(g, h, T) for h in hint_segs)] + hint_segs
+        solid = (solid | _raster(hint_segs, solid.shape)).astype(np.uint8)
     hollow: List[Seg] = []
     hollow_c: List[Seg] = []
     win_bands: List[Seg] = []
     if p.detect_thin_walls:
-        lines = line_mask(gray, ink, T, sensitive=p.degraded)
+        sens = p.degraded if p.sensitivity == "auto" else p.sensitivity == "sensitive"
+        lines = line_mask(gray, ink, T, sensitive=sens)
         hollow_c, win_bands = detect_line_bands(lines, solid, T, line_w)
         glazing = [h for h in hollow_c if _is_glazing(h, segs, T)]
         win_bands += glazing
@@ -166,8 +183,13 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
         classify_gap(g, thin_near, soft_thin, T, line_w)
         if g.kind == "door":          # doors come from the arc detector only
             g.kind, g.score = "opening", 0.5
-        if g.kind == "opening" and g.width > p.max_plain_opening_t * T:
-            continue
+        if g.kind == "opening":
+            if g.width > p.max_plain_opening_t * T or p.plain_openings == "off":
+                continue
+            # a doorway without a door: only where the same wall continues on
+            # the far side (found from both ends), not a wall stopping short
+            if p.plain_openings == "between_walls" and len(g.walls) < 2:
+                continue
         kept.append(g)
     # arcs whose wall gap was not found (e.g. a door between two wall stubs)
     for i, arc in enumerate(arcs):
@@ -320,6 +342,65 @@ def _gap_from_arc(a: DoorArc, walls: List[Seg], wall_t: float) -> Gap:
     tip_across = (a.tip[1] - a.hinge[1]) if o == "h" else (a.tip[0] - a.hinge[0])
     g.swing = ("down" if tip_across > 0 else "up") if o == "h" else ("right" if tip_across > 0 else "left")
     return g
+
+
+def hint_walls(hints, s: float, ink: np.ndarray, solid: np.ndarray, wall_t: float) -> List[Seg]:
+    """Walls the user marked with a polyline (original-image px, ``s`` =
+    working scale). Each segment is snapped to horizontal / vertical, then
+    fitted to the ink under it: the centre and thickness come from the dark
+    band across the line, and the wall is split where the ink stops for more
+    than ~1.5 wall thicknesses, so doors and windows in it are still found.
+    A segment with no ink at all is kept exactly as drawn."""
+    H, W = ink.shape
+    dark = (ink | solid).astype(np.uint8)
+    out: List[Seg] = []
+    for poly in hints or []:
+        pts = [(float(x) * s, float(y) * s) for x, y in poly]
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            if abs(x1 - x0) >= abs(y1 - y0):
+                o, c, a, b = "h", (y0 + y1) / 2, min(x0, x1), max(x0, x1)
+            else:
+                o, c, a, b = "v", (x0 + x1) / 2, min(y0, y1), max(y0, y1)
+            if b - a < wall_t:
+                continue
+            reach = int(round(wall_t * 1.5))
+            step = max(1, int(wall_t / 3))
+            centres, thick, cover = [], [], []
+            for t_ in np.arange(a, b, step):
+                ti = int(round(t_))
+                lo, hi = int(round(c)) - reach, int(round(c)) + reach + 1
+                prof = dark[max(0, lo):min(H, hi), ti] if o == "h" else dark[ti, max(0, lo):min(W, hi)]
+                if not (0 <= ti < (W if o == "h" else H)) or not prof.size or not prof.any():
+                    cover.append(False)
+                    continue
+                # the dark run closest to the drawn line
+                idx = np.flatnonzero(prof)
+                runs = np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1)
+                mid = int(round(c)) - max(0, lo)
+                run = min(runs, key=lambda r: min(abs(r[0] - mid), abs(r[-1] - mid)))
+                centres.append(max(0, lo) + (run[0] + run[-1]) / 2.0)
+                thick.append(len(run))
+                cover.append(True)
+            if sum(cover) < max(3, 0.25 * len(cover)):
+                out.append(Seg(o, c, a, b, wall_t * 0.8))         # no ink: as drawn
+                continue
+            cc = float(np.median(centres))
+            tt = float(np.clip(np.median(thick), wall_t * 0.3, wall_t * 2.0))
+            # split at stretches without ink (doorways / windows); shorter
+            # breaks (crossing lines, JPEG noise) are bridged
+            flags = np.array(cover, bool)
+            gap_n = max(1, int(round(wall_t * 1.5 / step)))
+            pieces = _runs(flags, max_gap=gap_n - 1)
+            n = len(flags)
+            for i0, i1 in pieces:
+                pa, pb = a + i0 * step, min(b, a + i1 * step)
+                if i0 == 0:
+                    pa = a
+                if i1 == n:
+                    pb = b
+                if pb - pa >= wall_t:
+                    out.append(Seg(o, cc, float(pa), float(pb), tt))
+    return out
 
 
 def line_mask(gray: np.ndarray, ink: np.ndarray, wall_t: float, sensitive: bool = False) -> np.ndarray:
