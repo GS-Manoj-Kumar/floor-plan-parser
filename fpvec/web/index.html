@@ -233,9 +233,9 @@ function renderBar(){
   if(st==='detect'){tb('<span class="lbl">Detect</span><button class="btn primary" id="tDet">'+(S.plan?'Detect again':'Detect walls, doors and windows')+'</button><span class="sp"></span><span class="note">Detecting again replaces your edits</span>');
     $('#tDet').onclick=detect;return;}
   if(st==='edit'){tb('<span class="lbl">Edit</span>'+segHTML('tool',[['select','Select','Click to select · drag to move · drag the round handles (V)'],['wall','Add wall','Drag from start to end (W)'],['door','Add door','Click on a wall (D)'],['window','Add window','Click on a wall (O)'],['opening','Add opening','Click on a wall']],S.tool)+
-      '<span class="vr"></span><button class="btn" id="tDel" title="Delete">Delete</button><button class="btn" id="tUnd" title="Ctrl+Z">Undo</button><button class="btn" id="tRed" title="Ctrl+Y">Redo</button>'+
+      '<span class="vr"></span><button class="btn" id="tOrtho" aria-pressed="'+(S.eOrtho!==false)+'" title="Keep new and dragged walls horizontal / vertical (Shift does the opposite)">Ortho</button><span class="vr"></span><button class="btn" id="tDel" title="Delete">Delete</button><button class="btn" id="tUnd" title="Ctrl+Z">Undo</button><button class="btn" id="tRed" title="Ctrl+Y">Redo</button>'+
       '<span class="sp"></span><button class="btn" id="tImg" aria-pressed="'+S.showImg+'">Show image</button>');
-    bindSeg('tool',setTool);$('#tDel').onclick=delSel;$('#tUnd').onclick=undoEdit;$('#tRed').onclick=redoEdit;
+    bindSeg('tool',setTool);$('#tOrtho').onclick=function(){S.eOrtho=S.eOrtho===false;this.setAttribute('aria-pressed',S.eOrtho);};$('#tDel').onclick=delSel;$('#tUnd').onclick=undoEdit;$('#tRed').onclick=redoEdit;
     $('#tImg').onclick=function(){S.showImg=!S.showImg;this.setAttribute('aria-pressed',S.showImg);draw();};return;}
   if(st==='plan'){tb('<span class="lbl">Result</span><button class="btn primary" id="tRep"'+(S.plan?'':' disabled')+' title="Load the edited result into the editor, replacing its drawing">Load result</button>'+
       '<button class="btn" id="tAdd"'+(S.plan?'':' disabled')+' title="Add the edited result to the drawing open in the editor (current level)">Add to drawing</button>'+
@@ -280,7 +280,7 @@ function renderPane(){
     '<h3>Your presets</h3><div class="row"><input type="text" id="pPName" placeholder="Name for the current settings" style="flex:1;min-width:0"><button class="btn" id="pPSave">Save</button></div><div class="ulist" id="pUser"></div>'+
     '<h3>Areas &amp; marks</h3><div class="box note">'+S.prep.masks.length+' area(s) · '+S.hints.length+' wall mark(s)<br><b>Brush / Rectangle / Polygon</b>: remove or blur what is not needed. <b>Mark walls</b>: draw along walls the tracer should find. Each line is fitted to the ink under it, and doors / windows in it are still found. A line over blank paper becomes a wall exactly as drawn.</div>';}
   else if(st==='detect'){h='<h2>Detect</h2><p class="lead">Trace walls, doors and windows from the prepared image.</p>'+resultHTML()+'<h3>Settings</h3><div id="pTune"></div>';}
-  else if(st==='edit'){h='<div class="sticky"><h3>Selected</h3><div id="pSel"></div></div><h2>Edit</h2><p class="lead">Fix the result before it goes into the floor plan. Drag a wall to move it (joined walls follow), drag its round handles to change its length. Doors and windows slide along their wall.</p>'+resultHTML()+'<h3>Walls</h3><table><thead><tr><th>#</th><th>Length</th><th>Thick</th><th></th></tr></thead><tbody id="tbW"></tbody></table><h3>Doors &amp; windows</h3><table><thead><tr><th>#</th><th>Type</th><th>Width</th></tr></thead><tbody id="tbO"></tbody></table>';}
+  else if(st==='edit'){h='<div class="sticky"><h3>Selected</h3><div id="pSel"></div></div><h2>Edit</h2><p class="lead">Fix the result before it goes into the floor plan. Drag a wall to move it (joined walls follow), drag its round handles to change its length. Doors and windows slide along their wall.</p>'+resultHTML()+tidyHTML()+'<h3>Walls</h3><table><thead><tr><th>#</th><th>Length</th><th>Thick</th><th></th></tr></thead><tbody id="tbW"></tbody></table><h3>Doors &amp; windows</h3><table><thead><tr><th>#</th><th>Type</th><th>Width</th></tr></thead><tbody id="tbO"></tbody></table>';}
   p.innerHTML=h;bindPane();}
 function ptsText(){var k=ptsScale();return S.scale.pts.length<2?(S.scale.pts.length?'1 of 2 points picked':'Pick 2 points in the drawing'):Math.round(dist2(S.scale.pts))+' px'+(k?' → <b>'+k.toFixed(3)+' mm/px</b>':' · type the distance');}
 function resultHTML(){if(!S.plan)return '<div class="box note">No result yet.</div>';var c=counts();
@@ -296,7 +296,7 @@ function bindPane(){
     if($('#pDist'))$('#pDist').oninput=function(){S.scale.dist=this.value;$('#ptsBox').innerHTML=ptsText();draw();};}
   if(st==='prepare')renderPresets();
   if(st==='detect')renderTuning();
-  if(st==='edit'){renderTables();renderSel();}
+  if(st==='edit'){renderTables();renderSel();bindTidy();}
 
 }
 function custom(){S.preset=null;document.querySelectorAll('.preset').forEach(function(b){b.setAttribute('aria-pressed','false');});}
@@ -324,9 +324,23 @@ function renderPresets(){
 function applyPreset(k){var x=allPresets()[k];if(!x)return;S.preset=k;var m=S.prep.masks;
   S.prep=Object.assign({grayscale:false,black:0,white:255,binary:false,lines:0},JSON.parse(JSON.stringify(x.prep||{})));S.prep.masks=m;
   S.tuning=Object.assign({},x.tuning||{});renderBar();renderPane();prepChanged();}
+/* tidy walls in the Edit step: ortho + join wall ends, done by the server (undo works) */
+function tidyOpt(){if(!S.tidy){var t=S.tuning||{};S.tidy={ortho:true,snap:true,dist:t.snap_dist!=null?t.snap_dist:3,unit:t.snap_unit||'t'};}return S.tidy;}
+function tidyHTML(){var o=tidyOpt();return '<h3>Tidy walls</h3><div class="field"><span class="k">Ortho</span><span></span><span class="wide">'+tgl('tdO',o.ortho?'On':'Off',o.ortho)+'</span><span class="help">Every wall exactly horizontal or vertical; nearly-aligned walls on one line.</span></div>'+
+  '<div class="field"><span class="k">Join wall ends</span><span></span><span class="wide">'+tgl('tdS',o.snap?'On':'Off',o.snap)+'</span><span class="help">Extend loose ends to the nearest wall: across a gap, into a wall (T) or to a corner (L).</span></div>'+
+  '<div class="field"><span class="k">Join distance</span><input type="number" id="tdD" min="0" step="0.5" value="'+o.dist+'"><span class="wide">'+segHTML('tdu',[['t','× thickness'],['pct','% of plan'],['mm','mm']],o.unit)+'</span></div>'+
+  '<div class="row"><button class="btn primary" id="tdGo">Tidy walls</button></div>';}
+function bindTidy(){if(!$('#tdGo'))return;var o=tidyOpt();
+  $('#tdO').onclick=function(){o.ortho=!o.ortho;this.setAttribute('aria-pressed',o.ortho);this.textContent=o.ortho?'On':'Off';};
+  $('#tdS').onclick=function(){o.snap=!o.snap;this.setAttribute('aria-pressed',o.snap);this.textContent=o.snap?'On':'Off';};
+  $('#tdD').oninput=function(){o.dist=+this.value||0;};
+  bindSeg('tdu',function(u){o.unit=u;document.querySelectorAll('[data-tdu]').forEach(function(b){b.setAttribute('aria-pressed',b.getAttribute('data-tdu')===u);});});
+  $('#tdGo').onclick=function(){if(!S.plan)return;var fd=new FormData();fd.append('plan',JSON.stringify(S.plan));fd.append('ortho',o.ortho);fd.append('snap',o.snap);fd.append('snap_dist',o.dist);fd.append('snap_unit',o.unit);
+    setStatus('Tidying walls…');api('api/tidy',fd).then(function(r){var n0=S.plan.walls.length;snapshot();S.plan=r.plan;S.sel=null;afterEdit();
+      setStatus('Tidied: '+n0+' → '+r.plan.walls.length+' walls · loose ends '+r.loose_before+' → '+r.loose_after);}).catch(function(e){setStatus('Tidy failed: '+e.message,true);});};}
 function renderTuning(){
   var box=$('#pTune');if(!box||!S.tuningSpec)return;var h='';
-  var names={between_walls:'Between walls',auto:'Auto',strict:'Strict',sensitive:'Sensitive',all:'All',off:'Off'},items={all:'Everything: walls, doors, windows, openings',walls_doors_windows:'Walls, doors and windows',walls_openings:'Walls and openings (no door / window types)',walls:'Walls only'};
+  var names={t:'× wall thickness',pct:'% of plan size',mm:'mm',between_walls:'Between walls',auto:'Auto',strict:'Strict',sensitive:'Sensitive',all:'All',off:'Off'},items={all:'Everything: walls, doors, windows, openings',walls_doors_windows:'Walls, doors and windows',walls_openings:'Walls and openings (no door / window types)',walls:'Walls only'};
   Object.keys(S.tuningSpec).forEach(function(k){var sp=S.tuningSpec[k],v=S.tuning[k]!=null?S.tuning[k]:sp.default;
     if(k==='items')h+='<div class="field"><span class="k"><b>'+sp.label+'</b></span><span></span><span class="wide choices">'+sp.choices.map(function(c){return '<button type="button" class="btn" data-tune-items="'+c+'" aria-pressed="'+(c===v)+'">'+items[c]+'</button>';}).join('')+'</span></div>';
     else if(sp.type==='choice')h+='<div class="field"><span class="k">'+sp.label+'</span><span></span><span class="wide">'+segHTML('tune-'+k,sp.choices.map(function(c){return [c,names[c]||c];}),v)+'</span><span class="help">'+sp.help+'</span></div>';
@@ -414,7 +428,7 @@ function detect(){
   fd.append('prep',JSON.stringify(S.prep));fd.append('tuning',JSON.stringify(S.tuning||{}));
   if(S.hints.length)fd.append('hints',JSON.stringify(S.hints.map(function(h){return h.points;})));
   setStatus('Detecting…');var b=$('#tDet');if(b)b.disabled=true;$('#bNext').disabled=true;
-  api('api/detect',fd).then(function(r){S.loadedRes=false;S.res=r;S.plan=JSON.parse(JSON.stringify(r.plan));S.undo=[];S.redo=[];S.sel=null;
+  api('api/detect',fd).then(function(r){S.loadedRes=false;S.tidy=null;S.res=r;S.plan=JSON.parse(JSON.stringify(r.plan));S.undo=[];S.redo=[];S.sel=null;
     return loadImg(r.base||r.image).then(function(im){S.resImg=im;if(im.naturalWidth!==IMGW||im.naturalHeight!==IMGH){IMGW=im.naturalWidth;IMGH=im.naturalHeight;fit();}
       setStatus('Detected in '+r.seconds+' s'+(r.notes&&r.notes.length?' · '+r.notes[r.notes.length-1]:''));go('edit');});})
   .catch(function(e){setStatus('Detection failed: '+e.message,true);}).then(function(){var b=$('#tDet');if(b)b.disabled=false;renderSteps();});}
@@ -571,12 +585,13 @@ function editDown(q,e){
       cx=w3.start_px[0]+ux*tc,cy=w3.start_px[1]+uy*tc;
     snapshot();S.plan.openings.push({id:S.plan.openings.length,type:S.tool,orientation:Math.abs(ux)>=Math.abs(uy)?'h':'v',start_px:[cx-ux*half,cy-uy*half],end_px:[cx+ux*half,cy+uy*half],thickness_px:w3.thickness_px,confidence:1});
     S.sel={k:'o',i:S.plan.openings.length-1};afterEdit();}}
+function orth(e){return S.eOrtho!==false?!e.shiftKey:!!e.shiftKey;}
 function editMove(q,e){
-  if(S.cur&&S.cur.kind==='newwall'){var a=S.cur.a,b=[q.x,q.y];if(!e.shiftKey){if(Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]))b[1]=a[1];else b[0]=a[0];}S.cur.b=snapEdit(b);if(!e.shiftKey){if(S.cur.b[1]!==a[1]&&Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]))S.cur.b=[S.cur.b[0],a[1]];}draw();return true;}
+  if(S.cur&&S.cur.kind==='newwall'){var a=S.cur.a,b=[q.x,q.y];if(orth(e)){if(Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]))b[1]=a[1];else b[0]=a[0];}S.cur.b=snapEdit(b);if(orth(e)){if(S.cur.b[1]!==a[1]&&Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]))S.cur.b=[S.cur.b[0],a[1]];}draw();return true;}
   if(!drag||drag.pan)return false;drag.moved=true;var P=S.plan;
   if(drag.k==='wend'){var w=P.walls[drag.i],other=drag.key==='start_px'?w.end_px:w.start_px,np=[q.x,q.y],horiz=Math.abs(np[0]-other[0])>=Math.abs(np[1]-other[1]);
-    if(!e.shiftKey){if(horiz)np[1]=other[1];else np[0]=other[0];}
-    var sn=snapEdit(np,[drag.i].concat(drag.links.map(function(l){return l.i;})));if(sn!==np){if(e.shiftKey)np=sn;else if(horiz)np=[sn[0],other[1]];else np=[other[0],sn[1]];}
+    if(orth(e)){if(horiz)np[1]=other[1];else np[0]=other[0];}
+    var sn=snapEdit(np,[drag.i].concat(drag.links.map(function(l){return l.i;})));if(sn!==np){if(!orth(e))np=sn;else if(horiz)np=[sn[0],other[1]];else np=[other[0],sn[1]];}
     w[drag.key]=np;drag.links.forEach(function(l){P.walls[l.i][l.end]=np.slice();});}
   else if(drag.k==='wall'){var w2=P.walls[drag.i],dx=q.x-drag.q0.x,dy=q.y-drag.q0.y,vx=drag.b0[0]-drag.a0[0],vy=drag.b0[1]-drag.a0[1],L=Math.hypot(vx,vy)||1,nx=-vy/L,ny=vx/L,d=dx*nx+dy*ny;
     w2.start_px=[drag.a0[0]+nx*d,drag.a0[1]+ny*d];w2.end_px=[drag.b0[0]+nx*d,drag.b0[1]+ny*d];

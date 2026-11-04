@@ -12,6 +12,7 @@ from .models import FloorPlan, Opening, Wall
 from .doors import DoorArc, find_doors, soft_thin_mask
 from .openings import Gap, classify_gap, find_gaps
 from .preprocess import ImageLike, binarize, estimate_stroke_widths, load_gray
+from .tidy import tidy
 from .thinlines import _texture, detect_line_bands, keep_connected
 from .walls import Seg, _runs, extract_segments, merge_collinear, snap_junctions, wall_mask
 
@@ -45,6 +46,12 @@ class Params:
     # "walls_doors_windows" (no plain openings), "walls_openings" (every gap
     # as a plain opening, no door / window types) or "walls"
     items: str = "all"
+    # tidy (fpvec/tidy.py): exactly horizontal / vertical walls on shared lines,
+    # and wall ends joined to the nearest wall within snap_dist
+    ortho: bool = True
+    snap_ends: bool = True
+    snap_dist: float = 3.0
+    snap_unit: str = "t"                # "t" = x wall thickness, "pct" = % of plan size, "mm"
 
 
 def _remove_border_frame(ink: np.ndarray) -> None:
@@ -234,7 +241,11 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
 
     if p.merge_across_openings:
         walls = _merge_across(walls, kept, T)
-    if p.items == "walls":
+    if p.items == "walls" and kept:
+        # walls only: every recognised door / window / opening is closed by
+        # running the wall on through it (to the next wall)
+        walls = merge_collinear(walls + [Seg(g.o, g.c, g.a, g.b, g.t) for g in kept], T)
+        snap_junctions(walls, T)
         kept = []
 
     # --------------------------------------------------------------- output
@@ -267,8 +278,11 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
             hinge=None if g.hinge is None else (g.hinge[0] * inv, g.hinge[1] * inv),
             swing_side=g.swing, double=g.double))
 
-    return FloorPlan(image_size=(W0, H0), walls=out_walls, openings=out_open,
+    plan = FloorPlan(image_size=(W0, H0), walls=out_walls, openings=out_open,
                      mm_per_px=mm_per_px, wall_thickness_px=T * inv, line_width_px=line_w * inv)
+    if p.ortho or p.snap_ends:
+        plan = tidy(plan, ortho=p.ortho, snap=p.snap_ends, snap_dist=p.snap_dist, snap_unit=p.snap_unit)
+    return plan
 
 
 def _merge_across(walls: List[Seg], gaps: List[Gap], wall_t: float) -> List[Seg]:

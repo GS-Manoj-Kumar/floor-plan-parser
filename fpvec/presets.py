@@ -70,6 +70,17 @@ TUNING = {
                    "default": 1.6, "help": "Shorter solid pieces are ignored (removes blobs and stubs)."},
     "wall_thickness_px": {"label": "Wall thickness (px)", "type": "number", "default": None,
                           "help": "Leave empty to measure it automatically."},
+    "ortho": {"label": "Ortho walls", "type": "bool", "default": True,
+              "help": "Make every wall exactly horizontal or vertical and put nearly-aligned walls on one line."},
+    "snap_ends": {"label": "Join wall ends", "type": "bool", "default": True,
+                  "help": "Extend a loose wall end to the nearest wall within the join distance: straight on "
+                          "across a gap (walls only closes doorways this way), into a wall it runs at (T), or "
+                          "to meet a nearby wall end (L corner)."},
+    "snap_dist": {"label": "Join distance", "type": "number", "default": 3.0,
+                  "help": "How far a wall end may be extended. Unit below."},
+    "snap_unit": {"label": "Join distance unit", "type": "choice", "choices": ["t", "pct", "mm"], "default": "t",
+                  "help": "t = multiples of the wall thickness, pct = percent of the plan size, mm = millimetres "
+                          "(uses the scale)."},
 }
 
 

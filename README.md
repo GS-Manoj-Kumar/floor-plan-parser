@@ -147,6 +147,13 @@ Detection settings (*Detect* step, `fpvec/presets.py` → `TUNING`; Python: `Par
 | `min_opening_mm` / `max_opening_mm` | 450 / 4500 | Narrowest / widest door or window |
 | `min_wall_t` | 1.6 | Shortest solid wall piece, in wall thicknesses (removes blobs and stubs) |
 | `wall_thickness_px` | auto | Override the measured wall thickness |
+| `ortho` | on | Every wall exactly horizontal or vertical; walls nearly on one line (within half a thickness) are put on that line |
+| `snap_ends` | on | Join wall ends: a loose end is extended to the nearest wall within `snap_dist` – straight on across a gap (with *walls only* this closes doorways), into a wall it runs at (T), or to meet a nearby wall end (L corner). Ends poking past a wall by up to one thickness are trimmed |
+| `snap_dist` / `snap_unit` | 3 / t | Join distance; unit `t` = multiples of the wall thickness, `pct` = % of the plan's larger side, `mm` = millimetres (uses the scale; without one a 200 mm wall is assumed) |
+
+The same tidy step is in **6 Edit → Tidy walls** (ortho, join distance and unit, *Tidy walls* button; undo works), and
+the **Ortho** button in the Edit toolbar keeps new and dragged walls horizontal / vertical (Shift does the opposite).
+In Python: `from fpvec.tidy import tidy; tidy(plan, ortho=True, snap=True, snap_dist=3, snap_unit="t")`.
 
 ## Preparation step (clean the image before tracing)
 
@@ -296,7 +303,7 @@ save_floorplan_doc(plan, "plan_floor_plan.json", image_path="plan.png")
 
 The demo uses a session API: `POST /api/load` (file, page, photo → token + corrected image), `/api/prepare` (token, prep →
 prepared image), `/api/detect` (token, prep, tuning, hints, scale fields → result), `/api/export` (edited plan JSON →
-editor document, DXF, SVG), `GET /api/presets`, and `GET/POST/DELETE /api/projects[/name]` for saved drawings. The one-shot endpoint below still works.
+editor document, DXF, SVG), `/api/tidy` (plan, ortho, snap, snap_dist, snap_unit → tidied plan), `GET /api/presets`, and `GET/POST/DELETE /api/projects[/name]` for saved drawings. The one-shot endpoint below still works.
 
 ```bash
 pip install -e ".[api]"
@@ -421,6 +428,7 @@ fpvec/
   openings.py    gap search along walls + window/opening classification
   doors.py       swing-arc door detection (hinge, width, swing)
   pipeline.py    vectorize() + Params
+  tidy.py        ortho walls + join wall ends
   models.py      Wall / Opening / FloorPlan + JSON dict
   export.py      JSON, SVG, DXF, overlay PNG
   scale.py       mm-per-px from a reference distance or wall thickness

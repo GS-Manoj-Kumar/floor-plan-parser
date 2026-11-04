@@ -48,6 +48,7 @@ from .presets import DEFAULT_PRESET, PRESETS, TUNING, tuning_params
 from .pipeline import Params, vectorize
 from .process import process
 from .rectify import correct_photo
+from .tidy import loose_ends, tidy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -257,6 +258,22 @@ async def api_export(plan: str = Form(...), token: Optional[str] = Form(None)):
     out = _exports(fp, s)
     out["plan"] = fp.to_dict()
     return _plain(out)
+
+
+@app.post("/api/tidy")
+async def api_tidy(plan: str = Form(...), ortho: bool = Form(True), snap: bool = Form(True),
+                   snap_dist: float = Form(3.0), snap_unit: str = Form("t")):
+    """Tidy an (edited) plan: ortho walls and join wall ends within
+    ``snap_dist`` (unit "t" = wall thicknesses, "pct" = % of the plan size,
+    "mm")."""
+    d = _json_form(plan, "plan")
+    if not isinstance(d, dict) or "walls" not in d:
+        raise HTTPException(400, "plan must be fpvec JSON with walls and openings")
+    if snap_unit not in ("t", "pct", "mm"):
+        raise HTTPException(400, "snap_unit must be t, pct or mm")
+    fp = plan_from_dict(d)
+    out = tidy(fp, ortho=ortho, snap=snap, snap_dist=max(0.0, snap_dist), snap_unit=snap_unit)
+    return _plain({"plan": out.to_dict(), "loose_before": loose_ends(fp), "loose_after": loose_ends(out)})
 
 
 # ------------------------------------------------------------------ projects
