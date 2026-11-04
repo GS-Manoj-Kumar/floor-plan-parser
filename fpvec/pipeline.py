@@ -41,6 +41,10 @@ class Params:
     # Each segment becomes a wall fitted to the ink under it (split at gaps,
     # so doors / windows in it are still found); with no ink it is kept as drawn.
     hints: Optional[list] = None
+    # what to output: "all" (walls, doors, windows, plain openings),
+    # "walls_doors_windows" (no plain openings), "walls_openings" (every gap
+    # as a plain opening, no door / window types) or "walls"
+    items: str = "all"
 
 
 def _remove_border_frame(ink: np.ndarray) -> None:
@@ -214,6 +218,11 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
         kept.append(Gap(w.o, w.c, w.a, w.b, w.t, kind="window", score=0.6))
 
     walls, kept = _main_clusters(walls, kept, T)
+    if p.items == "walls_doors_windows":
+        kept = [g for g in kept if g.kind != "opening"]
+    elif p.items == "walls_openings":
+        for g in kept:
+            g.kind, g.hinge, g.swing, g.double = "opening", None, None, False
 
     # ----------------------------------------------- tidy wall graph + exterior
     snap_junctions(walls, T)
@@ -225,6 +234,8 @@ def vectorize(image: ImageLike, mm_per_px: Optional[float] = None, params: Optio
 
     if p.merge_across_openings:
         walls = _merge_across(walls, kept, T)
+    if p.items == "walls":
+        kept = []
 
     # --------------------------------------------------------------- output
     inv = 1.0 / s

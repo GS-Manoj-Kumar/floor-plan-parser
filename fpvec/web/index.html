@@ -96,6 +96,22 @@ tbody tr.sel td{background:var(--accent-soft)}
 .dl .btn small{color:var(--muted);font-size:11px}
 .dl .btn.primary small{color:inherit;opacity:.85}
 .kbd{font:11px/1 ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:4px;padding:2px 4px;background:var(--panel2)}
+.bar .brk{flex-basis:100%;height:0}
+.slider{display:inline-flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap}
+.slider input{width:130px;accent-color:var(--accent)}
+.slider .v{min-width:2.2em;color:var(--muted);font-variant-numeric:tabular-nums}
+.sticky{position:sticky;top:-14px;margin:-14px -16px 12px;padding:12px 16px 10px;background:var(--panel);border-bottom:1px solid var(--line);z-index:2}
+.sticky h3{margin-top:4px}
+.choices{display:grid;gap:6px}
+.choices .btn{justify-content:flex-start}
+.ulist{display:grid;gap:4px;margin-top:6px}
+.ulist .it{display:flex;align-items:center;gap:6px}
+.ulist .it .preset{flex:1;min-width:0}
+#edwrap{position:absolute;inset:0;background:var(--panel)}
+#edwrap iframe{width:100%;height:100%;border:0;display:block}
+#edwrap .msg{padding:24px;max-width:60ch}
+main.full{grid-template-columns:1fr}
+main.full aside{display:none}
 [hidden]{display:none!important}
 @media (max-width:900px){body{display:block}main{grid-template-columns:1fr;grid-template-rows:62vh auto}aside{border-left:0;border-top:1px solid var(--line)}}
 </style>
@@ -113,6 +129,7 @@ tbody tr.sel td{background:var(--accent-soft)}
     <div id="drop"><div><b>Open a floor plan image or PDF</b>Drop it here, or use Open in the toolbar · wheel zooms · right-drag pans</div></div>
     <div id="legend" hidden><span><i class="sw" style="background:var(--wall)"></i>walls</span><span><i class="sw" style="background:var(--door)"></i>doors</span><span><i class="sw" style="background:var(--window)"></i>windows</span><span><i class="sw" style="background:var(--opening)"></i>openings</span></div>
     <div id="hint"></div>
+    <div id="edwrap" hidden></div>
   </div>
   <aside>
     <div class="pane" id="pane"></div>
@@ -130,7 +147,7 @@ function dpr(){return window.devicePixelRatio||1;}
 function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 
 /* ======================================================= state */
-var STEPS=[['open','Open'],['correct','Correct'],['scale','Scale'],['prepare','Prepare'],['detect','Detect'],['edit','Edit'],['promote','Promote']];
+var STEPS=[['open','Open'],['correct','Correct'],['scale','Scale'],['prepare','Prepare'],['detect','Detect'],['edit','Edit'],['plan','Floor plan']];
 var S={step:'open',file:null,token:null,kind:'image',page:1,pages:1,photo:'auto',rect:null,
   base:null,prepImg:null,resImg:null,shown:null,
   prep:{grayscale:true,black:110,white:210,binary:false,lines:0,masks:[]},hints:[],
@@ -153,21 +170,23 @@ function fmtLen(px){var k=mmpx();return k?Math.round(px*k)+' mm':Math.round(px)+
 
 /* ======================================================= steps + navigation */
 function stepIdx(id){for(var i=0;i<STEPS.length;i++)if(STEPS[i][0]===id)return i;return -1;}
-function reachable(id){if(id==='open')return true;if(!S.token)return false;if(id==='edit'||id==='promote')return !!S.plan;return true;}
+function reachable(id){if(id==='open')return true;if(id==='plan')return !!(S.caps.editor||S.plan);if(!S.token)return false;if(id==='edit')return !!S.plan;return true;}
 function renderSteps(){
   var nav=$('#steps'),curI=stepIdx(S.step);nav.innerHTML='';
   STEPS.forEach(function(st,i){var b=document.createElement('button');b.type='button';b.className='step'+(i<curI&&reachable(st[0])?' done':'')+(st[0]===S.step?' cur':'');
     b.innerHTML='<span class="n">'+(i+1)+'</span>'+st[1];b.disabled=!reachable(st[0]);b.onclick=function(){go(st[0]);};nav.appendChild(b);});
   $('#bBack').disabled=curI===0;
   var nx=STEPS[curI+1];
-  $('#bNext').textContent=S.step==='detect'&&!S.plan?'Detect':S.step==='promote'?'Open in editor':'Next';
-  $('#bNext').disabled=S.step!=='detect'&&S.step!=='promote'&&nx&&!reachable(nx[0]);}
+  $('#bNext').textContent=S.step==='detect'&&!S.plan?'Detect':S.step==='edit'?'Next: floor plan':'Next';
+  $('#bNext').disabled=S.step!=='detect'&&nx&&!reachable(nx[0]);}
 function go(id){S.step=id;S.cur=null;S.lenbuf='';
   var tools={prepare:['pan','brush','rect','poly','mark'],edit:['select','wall','door','window','opening'],scale:['pan','pick']}[id]||['pan'];
   if(tools.indexOf(S.tool)<0)S.tool=tools[0];
+  var full=id==='plan';$('main').classList.toggle('full',full);$('#edwrap').hidden=!full;
+  if(full)openEditor();else resize();
   hint('');renderSteps();renderBar();renderPane();draw();}
 $('#bBack').onclick=function(){var i=stepIdx(S.step);if(i>0)go(STEPS[i-1][0]);};
-$('#bNext').onclick=function(){if(S.step==='detect'&&!S.plan){detect();return;}if(S.step==='promote'){promote();return;}
+$('#bNext').onclick=function(){if(S.step==='detect'&&!S.plan){detect();return;}
   var i=stepIdx(S.step);if(i<STEPS.length-1&&reachable(STEPS[i+1][0]))go(STEPS[i+1][0]);};
 
 /* ======================================================= toolbar */
@@ -191,12 +210,25 @@ function renderBar(){
     if($('#tPick'))$('#tPick').onclick=function(){S.tool='pick';S.scale.pts=[];renderBar();renderPane();hint('Click the first point of a known distance');draw();};
     return;}
   if(st==='prepare'){
-    tb('<span class="lbl">Tool</span>'+segHTML('tool',[['pan','Pan','Move the drawing (V)'],['brush','Brush','Paint over what is not needed (B)'],['rect','Rectangle','Drag a box around what is not needed (R)'],['poly','Polygon','Click the corners of an area (P)'],['mark','Mark walls','Draw along walls: they get special attention (W)']],S.tool)+
+    var P=S.prep;
+    tb('<span class="lbl">Image</span>'+tgl('pGray','Black & white',P.grayscale)+tgl('pBin','Pure black / white',P.binary)+
+      slider('pBlack','Darken lines',0,250,P.black,'Grey at or below this becomes black')+
+      slider('pWhite','Whiten background',0,250,255-P.white,'Grey at or above 255 minus this becomes white: removes floors, textures, shading')+
+      slider('pLines','Boost thin lines',0,100,P.lines,'Darkens only thin strokes: door arcs, window glazing')+
+      '<button class="btn" id="tOrig" title="Hold to compare">Hold: before</button>'+
+      '<span class="brk"></span><span class="lbl">Tool</span>'+segHTML('tool',[['pan','Pan','Move the drawing (V)'],['brush','Brush','Paint over what is not needed (B)'],['rect','Rectangle','Drag a box around what is not needed (R)'],['poly','Polygon','Click the corners of an area (P)'],['mark','Mark walls','Draw along walls: they get special attention (W)']],S.tool)+
       '<span class="vr"></span>'+(S.tool==='mark'?'<span class="note">Click points · Shift = any angle · type a length + Enter · double-click / Enter ends</span>':
-      '<span class="lbl">Area</span>'+segHTML('mmode',[['white','Remove','Painted white: ignored completely'],['blur','Blur','Fine detail fades out']],S.mmode))+
-      '<span class="sp"></span><button class="btn" id="tUndo" title="Ctrl+Z">Undo</button><button class="btn" id="tClear">Clear all</button><button class="btn" id="tOrig" title="Hold to compare">Hold: before</button>');
-    bindSeg('tool',setTool);bindSeg('mmode',function(v){S.mmode=v;renderBar();renderPane();});
+      '<span class="lbl">Area</span>'+segHTML('mmode',[['white','Remove','Painted white: ignored completely'],['blur','Blur','Fine detail fades out']],S.mmode)+
+      slider('pSize','Brush',4,300,S.size,'Brush size in image pixels')+(S.mmode==='blur'?slider('pBlur','Blur',2,40,S.blur,'Blur strength'):''))+
+      '<span class="sp"></span><button class="btn" id="tUndo" title="Ctrl+Z">Undo</button><button class="btn" id="tClear">Clear areas &amp; marks</button>');
+    bindSeg('tool',setTool);bindSeg('mmode',function(v){S.mmode=v;renderBar();});
     $('#tUndo').onclick=undoPrep;$('#tClear').onclick=function(){S.prep.masks=[];S.hints=[];S.cur=null;prepChanged();};
+    $('#pGray').onclick=function(){P.grayscale=!P.grayscale;this.setAttribute('aria-pressed',P.grayscale);custom();prepChanged(true);};
+    $('#pBin').onclick=function(){P.binary=!P.binary;this.setAttribute('aria-pressed',P.binary);custom();prepChanged(true);};
+    [['pBlack','black',function(v){return v;}],['pLines','lines',function(v){return v;}],['pWhite','white',function(v){return 255-v;}]].forEach(function(a){
+      $('#'+a[0]).oninput=function(){P[a[1]]=a[2](+this.value);if(P.white<=P.black)P.white=Math.min(255,P.black+1);$('#v_'+a[0]).textContent=this.value;custom();prepChanged(true);};});
+    if($('#pSize'))$('#pSize').oninput=function(){S.size=+this.value;$('#v_pSize').textContent=this.value;draw();};
+    if($('#pBlur'))$('#pBlur').oninput=function(){S.blur=+this.value;$('#v_pBlur').textContent=this.value;};
     holdBtn($('#tOrig'),'base');return;}
   if(st==='detect'){tb('<span class="lbl">Detect</span><button class="btn primary" id="tDet">'+(S.plan?'Detect again':'Detect walls, doors and windows')+'</button><span class="sp"></span><span class="note">Detecting again replaces your edits</span>');
     $('#tDet').onclick=detect;return;}
@@ -205,9 +237,17 @@ function renderBar(){
       '<span class="sp"></span><button class="btn" id="tImg" aria-pressed="'+S.showImg+'">Show image</button>');
     bindSeg('tool',setTool);$('#tDel').onclick=delSel;$('#tUnd').onclick=undoEdit;$('#tRed').onclick=redoEdit;
     $('#tImg').onclick=function(){S.showImg=!S.showImg;this.setAttribute('aria-pressed',S.showImg);draw();};return;}
-  if(st==='promote'){tb('<span class="lbl">Promote</span><button class="btn primary" id="tPro">Open in Floor Plan editor</button><button class="btn" id="tJson">Download floor_plan.json</button>');
-    $('#tPro').onclick=promote;$('#tJson').onclick=function(){exportPlan().then(function(e){save(stem()+'_floor_plan.json',JSON.stringify(e.floorplan,null,1),'application/json');});};return;}
+  if(st==='plan'){tb('<span class="lbl">Result</span><button class="btn primary" id="tRep"'+(S.plan?'':' disabled')+' title="Load the edited result into the editor, replacing its drawing">Load result</button>'+
+      '<button class="btn" id="tAdd"'+(S.plan?'':' disabled')+' title="Add the edited result to the drawing open in the editor (current level)">Add to drawing</button>'+
+      '<span class="vr"></span><span class="lbl">Drawing</span><input type="text" id="tName" placeholder="Name" value="'+esc(S.projName||stem())+'" style="width:170px" aria-label="Drawing name"><button class="btn" id="tSave">Save</button>'+
+      '<select id="tOpenP" aria-label="Open a saved drawing"><option value="">Open saved…</option></select>'+
+      '<span class="sp"></span><span class="lbl">Download</span><button class="btn" data-dl="floorplan">floor_plan.json</button><button class="btn" data-dl="dxf">DXF</button><button class="btn" data-dl="svg">SVG</button>');
+    $('#tRep').onclick=function(){putInEditor('replace');};$('#tAdd').onclick=function(){putInEditor('add');};
+    $('#tName').oninput=function(){S.projName=this.value;};$('#tSave').onclick=saveProject;
+    listProjects();$('#tOpenP').onchange=function(){if(this.value)openProject(this.value);this.value='';};
+    document.querySelectorAll('[data-dl]').forEach(function(b){b.onclick=function(){download(b.getAttribute('data-dl'));};});return;}
 }
+function slider(id,label,min,max,val,title){return '<label class="slider" title="'+esc(title||'')+'">'+label+' <input type="range" id="'+id+'" min="'+min+'" max="'+max+'" value="'+val+'"> <span class="v" id="v_'+id+'">'+val+'</span></label>';}
 function holdBtn(b,what){b.addEventListener('pointerdown',function(){S.orig=what;draw();});['pointerup','pointerleave','pointercancel'].forEach(function(e){b.addEventListener(e,function(){if(S.orig){S.orig=false;draw();}});});}
 function setTool(t){S.tool=t;S.cur=null;S.lenbuf='';renderBar();
   hint({brush:'Paint over furniture, text, legends… · right-drag pans',rect:'Drag a box around what is not needed',poly:'Click the corners · double-click, Enter or the first corner closes',
@@ -235,19 +275,12 @@ function renderPane(){
     if(m==='pts'){var k=ptsScale();h+='<p class="note">Click two points with a known distance, then type it: 3600, 3.6m or 12\'6".</p><div class="row">Distance <input type="text" id="pDist" value="'+esc(S.scale.dist)+'" placeholder="3600" style="width:120px"></div>'+
       '<div class="box note" id="ptsBox">'+ptsText()+'</div>';}}
   else if(st==='prepare'){
-    h='<h2>Prepare</h2><p class="lead">Clean the image so only the plan’s lines are left. The preview is exactly what gets traced.</p><h3>Preset</h3><div class="presets" id="pPresets"></div>'+
-    '<h3>Lines</h3><div class="row">'+tgl('pGray','Black & white',S.prep.grayscale)+tgl('pBin','Pure black / white',S.prep.binary)+'</div>'+
-    field('pBlack','Darken lines',0,220,1,S.prep.black,'Grey at or below this becomes black: walls, door and window lines get darker')+
-    field('pWhite','Whiten background',0,135,1,255-S.prep.white,'Light floors, textures and shading become white')+
-    field('pLines','Boost thin lines',0,100,1,S.prep.lines,'Darkens only thin strokes (door arcs, window glazing). Can add false windows on textured floors')+
-    '<h3>Areas</h3>'+field('pSize','Brush size',4,300,1,S.size,'')+(S.mmode==='blur'?field('pBlur','Blur strength',2,40,1,S.blur,''):'')+
-    '<div class="box note">'+S.prep.masks.length+' area(s) · '+S.hints.length+' wall mark(s)<br><b>Mark walls</b>: draw along walls the tracer should find. Each line is fitted to the ink under it, and doors / windows in it are still found. A line over blank paper becomes a wall exactly as drawn.</div>';}
+    h='<h2>Prepare</h2><p class="lead">Clean the image so only the plan’s lines are left. The image settings are in the bar at the top. The preview is what gets traced.</p>'+
+    '<h3>Presets</h3><div class="presets" id="pPresets"></div>'+
+    '<h3>Your presets</h3><div class="row"><input type="text" id="pPName" placeholder="Name for the current settings" style="flex:1;min-width:0"><button class="btn" id="pPSave">Save</button></div><div class="ulist" id="pUser"></div>'+
+    '<h3>Areas &amp; marks</h3><div class="box note">'+S.prep.masks.length+' area(s) · '+S.hints.length+' wall mark(s)<br><b>Brush / Rectangle / Polygon</b>: remove or blur what is not needed. <b>Mark walls</b>: draw along walls the tracer should find. Each line is fitted to the ink under it, and doors / windows in it are still found. A line over blank paper becomes a wall exactly as drawn.</div>';}
   else if(st==='detect'){h='<h2>Detect</h2><p class="lead">Trace walls, doors and windows from the prepared image.</p>'+resultHTML()+'<h3>Settings</h3><div id="pTune"></div>';}
-  else if(st==='edit'){h='<h2>Edit</h2><p class="lead">Fix the result before promoting it. Drag a wall to move it (joined walls follow), drag its round handles to change its length. Doors and windows slide along their wall.</p>'+resultHTML()+'<h3>Selected</h3><div id="pSel"></div><h3>Walls</h3><table><thead><tr><th>#</th><th>Length</th><th>Thick</th><th></th></tr></thead><tbody id="tbW"></tbody></table><h3>Doors &amp; windows</h3><table><thead><tr><th>#</th><th>Type</th><th>Width</th></tr></thead><tbody id="tbO"></tbody></table>';}
-  else if(st==='promote'){h='<h2>Promote</h2><p class="lead">Send the edited plan to the Floor Plan editor: walls with thickness, doors and windows as editor objects, and the image as an underlay.</p>'+
-    (S.caps.editor?'<div class="box">The editor opens at <b>/editor</b> with this plan loaded. Use its <b>Save</b> to keep it as <span class="kbd">floor_plan.json</span>.</div>':
-     '<div class="box">To open the editor from here, copy <span class="kbd">floor_plan.html</span> to <span class="kbd">editor/floor_plan.html</span> in this project and restart <span class="kbd">fpvec-demo</span>. Until then, download <span class="kbd">floor_plan.json</span> and use the editor’s <b>Open</b>.</div>')+
-    '<h3>Downloads</h3><div class="dl"><button class="btn primary" data-dl="floorplan">floor_plan.json<small>Floor Plan editor</small></button><button class="btn" data-dl="dxf">plan.dxf<small>CAD, layered</small></button><button class="btn" data-dl="svg">plan.svg<small>vector preview</small></button><button class="btn" data-dl="plan">fpvec.json<small>walls + openings, px &amp; mm</small></button></div><h3>Result</h3>'+resultHTML();}
+  else if(st==='edit'){h='<div class="sticky"><h3>Selected</h3><div id="pSel"></div></div><h2>Edit</h2><p class="lead">Fix the result before it goes into the floor plan. Drag a wall to move it (joined walls follow), drag its round handles to change its length. Doors and windows slide along their wall.</p>'+resultHTML()+'<h3>Walls</h3><table><thead><tr><th>#</th><th>Length</th><th>Thick</th><th></th></tr></thead><tbody id="tbW"></tbody></table><h3>Doors &amp; windows</h3><table><thead><tr><th>#</th><th>Type</th><th>Width</th></tr></thead><tbody id="tbO"></tbody></table>';}
   p.innerHTML=h;bindPane();}
 function ptsText(){var k=ptsScale();return S.scale.pts.length<2?(S.scale.pts.length?'1 of 2 points picked':'Pick 2 points in the drawing'):Math.round(dist2(S.scale.pts))+' px'+(k?' → <b>'+k.toFixed(3)+' mm/px</b>':' · type the distance');}
 function resultHTML(){if(!S.plan)return '<div class="box note">No result yet.</div>';var c=counts();
@@ -261,31 +294,42 @@ function bindPane(){
     if($('#pWall'))$('#pWall').oninput=function(){S.scale.wall=+this.value;};
     if($('#pMmpx'))$('#pMmpx').oninput=function(){S.scale.mmpx=+this.value;};
     if($('#pDist'))$('#pDist').oninput=function(){S.scale.dist=this.value;$('#ptsBox').innerHTML=ptsText();draw();};}
-  if(st==='prepare'){
-    var pp=$('#pPresets');if(S.presets)Object.keys(S.presets).forEach(function(k){var x=S.presets[k],b=document.createElement('button');b.type='button';b.className='preset';b.setAttribute('aria-pressed',S.preset===k);
-      b.innerHTML='<b>'+esc(x.label)+'</b><span>'+esc(x.help)+'</span>';b.onclick=function(){applyPreset(k);};pp.appendChild(b);});
-    $('#pGray').onclick=function(){S.prep.grayscale=!S.prep.grayscale;this.setAttribute('aria-pressed',S.prep.grayscale);custom();prepChanged(true);};
-    $('#pBin').onclick=function(){S.prep.binary=!S.prep.binary;this.setAttribute('aria-pressed',S.prep.binary);custom();prepChanged(true);};
-    [['pBlack','black',function(v){return v;}],['pLines','lines',function(v){return v;}],['pWhite','white',function(v){return 255-v;}]].forEach(function(a){
-      $('#'+a[0]).oninput=function(){S.prep[a[1]]=a[2](+this.value);$('#v_'+a[0]).textContent=this.value;custom();prepChanged(true);};});
-    $('#pSize').oninput=function(){S.size=+this.value;$('#v_pSize').textContent=this.value;draw();};
-    if($('#pBlur'))$('#pBlur').oninput=function(){S.blur=+this.value;$('#v_pBlur').textContent=this.value;};}
+  if(st==='prepare')renderPresets();
   if(st==='detect')renderTuning();
   if(st==='edit'){renderTables();renderSel();}
-  if(st==='promote')document.querySelectorAll('[data-dl]').forEach(function(b){b.onclick=function(){var k=b.getAttribute('data-dl');exportPlan().then(function(e){
-    if(k==='floorplan')save(stem()+'_floor_plan.json',JSON.stringify(e.floorplan,null,1),'application/json');
-    if(k==='dxf')save(stem()+'.dxf',e.dxf,'application/dxf');if(k==='svg')save(stem()+'.svg',e.svg,'image/svg+xml');
-    if(k==='plan')save(stem()+'_fpvec.json',JSON.stringify(e.plan,null,2),'application/json');});};});
+
 }
 function custom(){S.preset=null;document.querySelectorAll('.preset').forEach(function(b){b.setAttribute('aria-pressed','false');});}
-function applyPreset(k){var x=S.presets[k];S.preset=k;var m=S.prep.masks;
+/* your presets: kept in this browser */
+function userPresets(){try{return JSON.parse(localStorage.getItem('fpvec_presets')||'{}');}catch(e){return {};}}
+function setUserPresets(o){try{localStorage.setItem('fpvec_presets',JSON.stringify(o));}catch(e){setStatus('Could not save presets in this browser',true);}}
+function defaultPreset(){try{return localStorage.getItem('fpvec_default_preset')||'';}catch(e){return '';}}
+function allPresets(){var o={};Object.keys(S.presets||{}).forEach(function(k){o[k]=S.presets[k];});var u=userPresets();Object.keys(u).forEach(function(k){o['u:'+k]=u[k];});return o;}
+function renderPresets(){
+  var pp=$('#pPresets'),up=$('#pUser');if(!pp)return;pp.innerHTML='';up.innerHTML='';var def=defaultPreset();
+  Object.keys(S.presets||{}).forEach(function(k){var x=S.presets[k],b=document.createElement('button');b.type='button';b.className='preset';b.setAttribute('aria-pressed',S.preset===k);
+    b.innerHTML='<b>'+esc(x.label)+'</b><span>'+esc(x.help)+'</span>';b.onclick=function(){applyPreset(k);};pp.appendChild(b);});
+  var u=userPresets(),names=Object.keys(u);
+  if(!names.length)up.innerHTML='<div class="note">Set the image sliders, then save them here under a name.</div>';
+  names.forEach(function(n){var k='u:'+n,x=u[n],it=document.createElement('div');it.className='it';
+    it.innerHTML='<button type="button" class="preset" aria-pressed="'+(S.preset===k)+'"><b>'+esc(n)+(def===k?' · default':'')+'</b><span>darken '+x.prep.black+' · whiten '+(255-x.prep.white)+(x.prep.lines?' · boost '+x.prep.lines:'')+(x.prep.grayscale?' · B&amp;W':'')+'</span></button>'+
+      '<button type="button" class="btn" title="Use this preset for every new image">'+(def===k?'Default ✓':'Default')+'</button><button type="button" class="btn" title="Delete this preset">Delete</button>';
+    var bs=it.querySelectorAll('button');bs[0].onclick=function(){applyPreset(k);};
+    bs[1].onclick=function(){try{localStorage.setItem('fpvec_default_preset',def===k?'':k);}catch(e){}renderPresets();};
+    bs[2].onclick=function(){var o=userPresets();delete o[n];setUserPresets(o);if(def===k){try{localStorage.removeItem('fpvec_default_preset');}catch(e){}}renderPresets();};
+    up.appendChild(it);});
+  $('#pPSave').onclick=function(){var n=($('#pPName').value||'').trim();if(!n){setStatus('Type a name for the preset first.',true);$('#pPName').focus();return;}
+    var o=userPresets(),pr=JSON.parse(JSON.stringify(S.prep));delete pr.masks;o[n]={label:n,help:'Your preset',prep:pr,tuning:JSON.parse(JSON.stringify(S.tuning||{}))};setUserPresets(o);S.preset='u:'+n;$('#pPName').value='';setStatus('Preset “'+n+'” saved');renderPresets();};
+}
+function applyPreset(k){var x=allPresets()[k];if(!x)return;S.preset=k;var m=S.prep.masks;
   S.prep=Object.assign({grayscale:false,black:0,white:255,binary:false,lines:0},JSON.parse(JSON.stringify(x.prep||{})));S.prep.masks=m;
-  S.tuning=Object.assign({},x.tuning||{});renderPane();prepChanged();}
+  S.tuning=Object.assign({},x.tuning||{});renderBar();renderPane();prepChanged();}
 function renderTuning(){
   var box=$('#pTune');if(!box||!S.tuningSpec)return;var h='';
-  var names={between_walls:'Between walls',auto:'Auto',strict:'Strict',sensitive:'Sensitive',all:'All',off:'Off'};
+  var names={between_walls:'Between walls',auto:'Auto',strict:'Strict',sensitive:'Sensitive',all:'All',off:'Off'},items={all:'Everything: walls, doors, windows, openings',walls_doors_windows:'Walls, doors and windows',walls_openings:'Walls and openings (no door / window types)',walls:'Walls only'};
   Object.keys(S.tuningSpec).forEach(function(k){var sp=S.tuningSpec[k],v=S.tuning[k]!=null?S.tuning[k]:sp.default;
-    if(sp.type==='choice')h+='<div class="field"><span class="k">'+sp.label+'</span><span></span><span class="wide">'+segHTML('tune-'+k,sp.choices.map(function(c){return [c,names[c]||c];}),v)+'</span><span class="help">'+sp.help+'</span></div>';
+    if(k==='items')h+='<div class="field"><span class="k"><b>'+sp.label+'</b></span><span></span><span class="wide choices">'+sp.choices.map(function(c){return '<button type="button" class="btn" data-tune-items="'+c+'" aria-pressed="'+(c===v)+'">'+items[c]+'</button>';}).join('')+'</span></div>';
+    else if(sp.type==='choice')h+='<div class="field"><span class="k">'+sp.label+'</span><span></span><span class="wide">'+segHTML('tune-'+k,sp.choices.map(function(c){return [c,names[c]||c];}),v)+'</span><span class="help">'+sp.help+'</span></div>';
     else if(sp.type==='bool')h+='<div class="field"><span class="k">'+sp.label+'</span><span></span><span class="wide">'+tgl('tune-'+k,v?'On':'Off',v)+'</span><span class="help">'+sp.help+'</span></div>';
     else if(sp.type==='range')h+=field('tune-'+k,sp.label,sp.min,sp.max,sp.step,v,sp.help);
     else h+='<div class="field"><span class="k">'+sp.label+'</span><input type="number" id="tune-'+k+'" value="'+(v==null?'':v)+'" placeholder="auto"><span class="help">'+sp.help+'</span></div>';});
@@ -296,7 +340,7 @@ function renderTuning(){
     else if(sp.type==='bool')$('#tune-'+k).onclick=function(){S.tuning[k]=!(S.tuning[k]!=null?S.tuning[k]:sp.default);renderTuning();};
     else if(sp.type==='range')$('#tune-'+k).oninput=function(){S.tuning[k]=+this.value;$('#v_tune-'+k).textContent=this.value;};
     else $('#tune-'+k).oninput=function(){S.tuning[k]=this.value===''?null:+this.value;};});
-  $('#tReset').onclick=function(){S.tuning=Object.assign({},S.preset&&S.presets[S.preset]?S.presets[S.preset].tuning:{});renderTuning();};
+  $('#tReset').onclick=function(){var x=S.preset&&allPresets()[S.preset];S.tuning=Object.assign({},x?x.tuning:{});renderTuning();};
 }
 
 /* ======================================================= loading */
@@ -318,9 +362,34 @@ function load(first){
 
 /* ======================================================= preparation preview (the server applies the recipe) */
 var prepT=null,prepSeq=0;
-function prepChanged(soft){S.plan=null;S.res=null;S.resImg=null;renderSteps();if(S.step==='prepare'&&!soft)renderPane();clearTimeout(prepT);prepT=setTimeout(refreshPrep,soft?160:20);draw();}
-function refreshPrep(){if(!S.token)return Promise.resolve();var seq=++prepSeq,fd=new FormData();fd.append('token',S.token);fd.append('prep',JSON.stringify(S.prep));
+function prepChanged(soft){S.plan=null;S.res=null;S.resImg=null;renderSteps();if(S.step==='prepare'&&!soft)renderPane();
+  if(!S.prep.lines){cancelAnimationFrame(prepT);prepT=requestAnimationFrame(function(){prepLocal();draw();});}
+  else{clearTimeout(prepT);prepT=setTimeout(refreshPrep,soft?160:20);}draw();}
+// the thin-line boost needs a morphology filter: the server renders it.
+// Everything else is rendered here, live, in the same order as fpvec/prepare.py.
+function refreshPrep(){if(!S.token)return Promise.resolve();if(!S.prep.lines){prepLocal();draw();return Promise.resolve();}
+  var seq=++prepSeq,fd=new FormData();fd.append('token',S.token);fd.append('prep',JSON.stringify(S.prep));
   return api('api/prepare',fd).then(function(r){return loadImg(r.image);}).then(function(im){if(seq===prepSeq){S.prepImg=im;draw();}}).catch(function(e){setStatus(e.message,true);});}
+var PC=null;
+function shapePath(c,m){c.beginPath();
+  if(m.type==='rect'){var a=m.points[0],b=m.points[1];c.rect(Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]));c.fill();}
+  else if(m.type==='poly'){m.points.forEach(function(q,i){if(i)c.lineTo(q[0],q[1]);else c.moveTo(q[0],q[1]);});c.closePath();c.fill();}
+  else{c.lineCap='round';c.lineJoin='round';c.lineWidth=m.size;m.points.forEach(function(q,i){if(i)c.lineTo(q[0],q[1]);else c.moveTo(q[0],q[1]);});if(m.points.length===1)c.lineTo(m.points[0][0]+0.01,m.points[0][1]);c.stroke();}}
+function prepLocal(){
+  if(!S.base)return;var W=S.base.naturalWidth,H=S.base.naturalHeight,P=S.prep;
+  if(!PC||PC.width!==W||PC.height!==H){PC=document.createElement('canvas');PC.width=W;PC.height=H;}
+  var c=PC.getContext('2d');c.globalCompositeOperation='source-over';c.filter='none';c.drawImage(S.base,0,0);
+  if(P.grayscale||P.binary||P.black>0||P.white<255){
+    var d=c.getImageData(0,0,W,H),a=d.data,L=new Uint8ClampedArray(256),b=P.black,w=Math.max(P.white,b+1),mid=(b+w)/2,gray=P.grayscale||P.binary;
+    for(var v=0;v<256;v++)L[v]=P.binary?(v<=mid?0:255):Math.round((v-b)*255/Math.max(1,w-b));
+    for(var i=0;i<a.length;i+=4){var r=a[i],g=a[i+1],bb=a[i+2];if(gray){var y=(0.299*r+0.587*g+0.114*bb+0.5)|0;r=g=bb=y;}a[i]=L[r];a[i+1]=L[g];a[i+2]=L[bb];}
+    c.putImageData(d,0,0);}
+  if(P.masks.length){var mk=document.createElement('canvas');mk.width=W;mk.height=H;var mc=mk.getContext('2d'),tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;var tc=tmp.getContext('2d');
+    P.masks.forEach(function(m){mc.globalCompositeOperation='source-over';mc.clearRect(0,0,W,H);mc.fillStyle='#000';mc.strokeStyle='#000';shapePath(mc,m);
+      tc.globalCompositeOperation='source-over';tc.clearRect(0,0,W,H);tc.filter='none';
+      if(m.mode==='blur'){tc.filter='blur('+Math.max(1,m.blur||10)+'px)';tc.drawImage(PC,0,0);tc.filter='none';}else{tc.fillStyle='#fff';tc.fillRect(0,0,W,H);}
+      tc.globalCompositeOperation='destination-in';tc.drawImage(mk,0,0);c.drawImage(tmp,0,0);});}
+  S.prepImg=PC;}
 function undoPrep(){if(S.cur){S.cur=null;draw();return;}var lm=S.prep.masks[S.prep.masks.length-1],lh=S.hints[S.hints.length-1];
   if(lh&&(!lm||lh._t>lm._t)){S.hints.pop();S.plan=null;renderSteps();renderPane();draw();}else if(lm){S.prep.masks.pop();prepChanged();}}
 
@@ -345,7 +414,7 @@ function detect(){
   fd.append('prep',JSON.stringify(S.prep));fd.append('tuning',JSON.stringify(S.tuning||{}));
   if(S.hints.length)fd.append('hints',JSON.stringify(S.hints.map(function(h){return h.points;})));
   setStatus('Detecting…');var b=$('#tDet');if(b)b.disabled=true;$('#bNext').disabled=true;
-  api('api/detect',fd).then(function(r){S.res=r;S.plan=JSON.parse(JSON.stringify(r.plan));S.undo=[];S.redo=[];S.sel=null;
+  api('api/detect',fd).then(function(r){S.loadedRes=false;S.res=r;S.plan=JSON.parse(JSON.stringify(r.plan));S.undo=[];S.redo=[];S.sel=null;
     return loadImg(r.base||r.image).then(function(im){S.resImg=im;if(im.naturalWidth!==IMGW||im.naturalHeight!==IMGH){IMGW=im.naturalWidth;IMGH=im.naturalHeight;fit();}
       setStatus('Detected in '+r.seconds+' s'+(r.notes&&r.notes.length?' · '+r.notes[r.notes.length-1]:''));go('edit');});})
   .catch(function(e){setStatus('Detection failed: '+e.message,true);}).then(function(){var b=$('#tDet');if(b)b.disabled=false;renderSteps();});}
@@ -365,11 +434,11 @@ function shownImage(){
   if(S.orig==='upload'&&S.upload)return S.upload;
   if(S.orig==='base')return S.base;
   if(S.step==='open'||S.step==='correct'||S.step==='scale')return S.base;
-  if((S.step==='edit'||S.step==='promote')&&S.resImg)return S.resImg;
+  if(S.step==='edit'&&S.resImg)return S.resImg;
   return S.prepImg||S.base;}
 function draw(){
   var W=cv.width,H=cv.height,D=dpr();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,W,H);
-  var planView=!!S.plan&&(S.step==='edit'||S.step==='promote'||S.step==='detect');
+  var planView=!!S.plan&&(S.step==='edit'||S.step==='detect');
   $('#legend').hidden=!planView;
   if(!S.base)return;
   var img=shownImage(),iw=IMGW,ih=IMGH;
@@ -555,7 +624,7 @@ function renderTables(){var tw=$('#tbW'),to=$('#tbO');if(!tw)return;
   to.innerHTML=S.plan.openings.map(function(o,i){var L=Math.hypot(o.end_px[0]-o.start_px[0],o.end_px[1]-o.start_px[1]);return '<tr data-o="'+i+'"><td>'+i+'</td><td><i class="sw" style="background:var(--'+o.type+')"></i> '+o.type+'</td><td>'+fmtLen(L)+'</td></tr>';}).join('');
   tw.querySelectorAll('tr').forEach(function(r){r.onclick=function(){S.sel={k:'w',i:+r.dataset.w};if(S.tool!=='select')setTool('select');renderSel();selRow();draw();};});
   to.querySelectorAll('tr').forEach(function(r){r.onclick=function(){S.sel={k:'o',i:+r.dataset.o};if(S.tool!=='select')setTool('select');renderSel();selRow();draw();};});selRow();}
-function selRow(){document.querySelectorAll('tbody tr').forEach(function(r){r.classList.remove('sel');});if(!S.sel)return;var r=document.querySelector('tr[data-'+S.sel.k+'="'+S.sel.i+'"]');if(r){r.classList.add('sel');r.scrollIntoView({block:'nearest'});}}
+function selRow(){document.querySelectorAll('tbody tr').forEach(function(r){r.classList.remove('sel');});if(!S.sel)return;var r=document.querySelector('tr[data-'+S.sel.k+'="'+S.sel.i+'"]');if(r){r.classList.add('sel');r.scrollIntoView({block:'center',behavior:'smooth'});}}
 function renderSel(){var b=$('#pSel');if(!b)return;if(!S.sel){b.innerHTML='<div class="note">Click a wall, door or window.</div>';return;}var k=mmpx(),unit=k?'mm':'px';
   function v(px){return k?Math.round(px*k):Math.round(px);}
   if(S.sel.k==='w'){var w=S.plan.walls[S.sel.i];if(!w){b.innerHTML='';return;}var L=Math.hypot(w.end_px[0]-w.start_px[0],w.end_px[1]-w.start_px[1]);
@@ -580,24 +649,48 @@ function stem(){return (S.file&&S.file.name||'plan').replace(/\.[^.]+$/,'');}
 function save(name,text,type){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},500);}
 function exportPlan(){var fd=new FormData(),p=JSON.parse(JSON.stringify(S.plan));fd.append('plan',JSON.stringify(p));if(S.token)fd.append('token',S.token);setStatus('Exporting…');
   return api('api/export',fd).then(function(r){setStatus('Exported '+r.plan.walls.length+' walls and '+r.plan.openings.length+' doors / windows / openings');return r;}).catch(function(e){setStatus('Export failed: '+e.message,true);throw e;});}
-function promote(){
-  if(!S.plan)return;
-  if(!S.caps.editor){setStatus('Editor not found: copy floor_plan.html to editor/floor_plan.html and restart. Downloaded floor_plan.json instead.',true);
-    exportPlan().then(function(e){save(stem()+'_floor_plan.json',JSON.stringify(e.floorplan,null,1),'application/json');});return;}
-  var w=window.open('about:blank','_blank');
-  exportPlan().then(function(e){var doc=e.floorplan,note='';
-    try{localStorage.setItem('fp_autosave',JSON.stringify(doc));}
-    catch(err){var c=JSON.parse(JSON.stringify(doc));c.ents.forEach(function(x){if(x.t==='image')x.src='';});
-      try{localStorage.setItem('fp_autosave',JSON.stringify(c));note=' · the image underlay was too big for the browser: it is in the downloaded floor_plan.json';save(stem()+'_floor_plan.json',JSON.stringify(doc,null,1),'application/json');}
-      catch(e2){setStatus('Could not hand the plan to the editor: '+e2.message,true);if(w)w.close();return;}}
-    if(w)w.location.href='editor';else window.open('editor','_blank');setStatus('Opened in the Floor Plan editor'+note);})
-  .catch(function(){if(w)w.close();});}
+function download(k){
+  if(k==='floorplan'&&edWin()){save((S.projName||stem())+'_floor_plan.json',JSON.stringify(edWin().D,null,1),'application/json');return;}
+  if(!S.plan){setStatus('Nothing traced yet.',true);return;}
+  exportPlan().then(function(e){if(k==='floorplan')save(stem()+'_floor_plan.json',JSON.stringify(e.floorplan,null,1),'application/json');
+    if(k==='dxf')save(stem()+'.dxf',e.dxf,'application/dxf');if(k==='svg')save(stem()+'.svg',e.svg,'image/svg+xml');});}
+var ED=null,edReady=Promise.resolve();
+function edWin(){try{var w=ED&&ED.contentWindow;return w&&w.D&&w.loadDoc?w:null;}catch(e){return null;}}
+function ensureEditor(){
+  if(!S.caps.editor)return Promise.resolve(null);
+  if(ED)return edReady;
+  var wrap=$('#edwrap');wrap.innerHTML='';ED=document.createElement('iframe');ED.title='Floor Plan editor';wrap.appendChild(ED);
+  edReady=new Promise(function(ok){ED.onload=function(){var n=0;(function wait(){if(edWin()||n++>200)ok(edWin());else setTimeout(wait,50);})();};});
+  ED.src='editor';return edReady;}
+// the Floor plan step: show the editor; a new, not yet loaded result goes in automatically when the editor is empty
+function openEditor(){
+  if(!S.caps.editor){$('#edwrap').innerHTML='<div class="msg"><h2>Floor Plan editor not found</h2><p>Copy <span class="kbd">floor_plan.html</span> to <span class="kbd">editor/floor_plan.html</span> in this project and restart <span class="kbd">fpvec-demo</span>. The editor then opens here, inside this page.</p><p>Until then, use <b>floor_plan.json</b> under Download and the editor’s <b>Open</b>.</p></div>';return;}
+  ensureEditor().then(function(W){if(W&&S.plan&&!S.loadedRes&&!W.D.ents.length)putInEditor('replace');});}
+function putInEditor(mode){
+  if(!S.plan||S.putting)return;S.putting=true;
+  Promise.all([ensureEditor(),exportPlan()]).then(function(a){var W=a[0],doc=a[1].floorplan;if(!W)throw new Error('the editor did not load');
+    if(mode==='replace'||!W.D.ents.length){W.loadDoc(W.fixDoc(JSON.parse(JSON.stringify(doc))));}
+    else{ // add to the drawing open in the editor, on its current level, with fresh ids
+      W.snapUndo();var map={},lv=W.D.curLevel;
+      doc.ents.forEach(function(e){if(e.t==='opening')return;var n=JSON.parse(JSON.stringify(e));n.id='e'+(W.D.nextId++);map[e.id]=n.id;n.lv=lv;W.D.ents.push(n);});
+      doc.ents.forEach(function(e){if(e.t!=='opening'||!map[e.wall])return;var n=JSON.parse(JSON.stringify(e));n.id='e'+(W.D.nextId++);n.wall=map[e.wall];n.lv=lv;W.D.ents.push(n);});
+      W.changed();if(W.fitView)W.fitView();}
+    S.loadedRes=true;setStatus(mode==='add'?'Result added to the drawing':'Result loaded into the editor');})
+  .catch(function(e){setStatus('Could not load into the editor: '+e.message,true);})
+  .then(function(){S.putting=false;});}
+function listProjects(){fetch('api/projects').then(function(r){return r.json();}).then(function(l){var s=$('#tOpenP');if(!s)return;
+  l.forEach(function(p){var o=document.createElement('option');o.value=p.name;o.textContent=p.name+' · '+new Date(p.modified*1000).toLocaleString();s.appendChild(o);});}).catch(function(){});}
+function saveProject(){var W=edWin();if(!W){setStatus('Open the editor first.',true);return;}var n=(S.projName||stem()||'plan').trim();
+  var fd=new FormData();fd.append('name',n);fd.append('doc',JSON.stringify(W.D));
+  api('api/projects',fd).then(function(r){S.projName=r.saved;setStatus('Saved “'+r.saved+'” in the projects folder');renderBar();}).catch(function(e){setStatus('Could not save: '+e.message,true);});}
+function openProject(name){Promise.all([ensureEditor(),fetch('api/projects/'+encodeURIComponent(name)).then(function(r){if(!r.ok)throw new Error('not found');return r.json();})]).then(function(a){
+  var W=a[0];if(!W)return;W.loadDoc(W.fixDoc(a[1]));S.projName=name;S.loadedRes=true;var t=$('#tName');if(t)t.value=name;setStatus('Opened “'+name+'”');}).catch(function(e){setStatus('Could not open: '+e.message,true);});}
 
 /* ======================================================= start */
 Promise.all([fetch('api/presets').then(function(r){return r.json();}),fetch('api/capabilities').then(function(r){return r.json();})]).then(function(a){
-  S.presets=a[0].presets;S.tuningSpec=a[0].tuning;S.caps=a[1];S.preset=a[0].default;var d=S.presets[S.preset];
+  S.presets=a[0].presets;S.tuningSpec=a[0].tuning;S.caps=a[1];var ud=defaultPreset();S.preset=ud&&allPresets()[ud]?ud:a[0].default;var d=allPresets()[S.preset];
   S.prep=Object.assign({grayscale:false,black:0,white:255,binary:false,lines:0},JSON.parse(JSON.stringify(d.prep)));S.prep.masks=[];S.tuning=Object.assign({},d.tuning);
-  renderPane();}).catch(function(){});
+  renderSteps();renderPane();}).catch(function(){});
 window.__fpvec={state:function(){return S;}};
 renderSteps();renderBar();renderPane();resize();
 })();

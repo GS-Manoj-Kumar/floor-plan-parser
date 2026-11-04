@@ -94,3 +94,32 @@ def test_session_api_flow():
     assert ex["floorplan"]["app"] == "floorplan" and any(e["t"] == "image" for e in ex["floorplan"]["ents"])
     assert c.post("/api/prepare", data={"token": "nope"}).status_code == 404
     assert "bw" in c.get("/api/presets").json()["presets"]
+
+
+def test_items_option():
+    from collections import Counter
+    img, gt = make_plan(hollow_interior=False)
+    got = {}
+    for it in ("all", "walls_doors_windows", "walls_openings", "walls"):
+        r = process(img, mm_per_px=gt["mm_per_px"], auto_scale=False, params=Params(items=it))
+        got[it] = (len(r.plan.walls), Counter(o.kind for o in r.plan.openings))
+    assert got["walls"][1] == Counter() and got["walls"][0] == got["all"][0]
+    assert set(got["walls_openings"][1]) == {"opening"}
+    assert sum(got["walls_openings"][1].values()) == sum(got["all"][1].values())
+    assert "opening" not in got["walls_doors_windows"][1]
+
+
+def test_projects_api(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    monkeypatch.setenv("FPVEC_PROJECTS", str(tmp_path))
+    from fastapi.testclient import TestClient
+    from fpvec.api import app
+    c = TestClient(app)
+    doc = {"app": "floorplan", "v": 1, "ents": [], "nextId": 1}
+    assert c.post("/api/projects", data={"name": "Flat 3/B", "doc": json.dumps(doc)}).json()["saved"] == "Flat 3B"
+    assert [p["name"] for p in c.get("/api/projects").json()] == ["Flat 3B"]
+    assert c.get("/api/projects/Flat 3B").json()["app"] == "floorplan"
+    assert c.post("/api/projects", data={"name": "x", "doc": json.dumps({"no": 1})}).status_code == 400
+    c.delete("/api/projects/Flat 3B")
+    assert c.get("/api/projects").json() == []

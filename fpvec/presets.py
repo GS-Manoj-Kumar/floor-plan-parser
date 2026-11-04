@@ -46,6 +46,10 @@ DEFAULT_PRESET = "bw"
 
 # detection settings the user may change, with their range and meaning (for the UI)
 TUNING = {
+    "items": {"label": "Detect", "type": "choice", "choices": ["all", "walls_doors_windows", "walls_openings", "walls"],
+              "default": "all",
+              "help": "Everything; walls, doors and windows (no plain openings); walls and openings (every gap as a "
+                      "plain opening, no door / window types); or walls only (walls run through the gaps)."},
     "sensitivity": {"label": "Thin-line sensitivity", "type": "choice", "choices": ["auto", "strict", "sensitive"],
                     "default": "auto",
                     "help": "How faint a line may be and still count. Strict ignores anti-aliasing and textures; "

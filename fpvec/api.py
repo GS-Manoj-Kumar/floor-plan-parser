@@ -259,6 +259,62 @@ async def api_export(plan: str = Form(...), token: Optional[str] = Form(None)):
     return _plain(out)
 
 
+# ------------------------------------------------------------------ projects
+# Floor Plan drawings saved from the embedded editor, kept on this machine.
+def _proj_dir() -> str:
+    d = os.environ.get("FPVEC_PROJECTS") or os.path.join(ROOT, "projects")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _proj_path(name: str) -> str:
+    safe = "".join(c for c in name if c.isalnum() or c in " ._-()").strip().rstrip(".")
+    if not safe:
+        raise HTTPException(400, "give the drawing a name")
+    if not safe.lower().endswith(".json"):
+        safe += ".json"
+    return os.path.join(_proj_dir(), safe)
+
+
+@app.get("/api/projects")
+def projects():
+    d = _proj_dir()
+    out = []
+    for f in sorted(os.listdir(d)):
+        if f.lower().endswith(".json"):
+            st = os.stat(os.path.join(d, f))
+            out.append({"name": f[:-5], "modified": int(st.st_mtime), "bytes": st.st_size})
+    out.sort(key=lambda x: -x["modified"])
+    return out
+
+
+@app.get("/api/projects/{name}")
+def project_get(name: str):
+    p = _proj_path(name)
+    if not os.path.isfile(p):
+        raise HTTPException(404, "no such drawing")
+    return FileResponse(p, media_type="application/json")
+
+
+@app.post("/api/projects")
+async def project_save(name: str = Form(...), doc: str = Form(...)):
+    d = _json_form(doc, "doc")
+    if not isinstance(d, dict) or d.get("app") != "floorplan":
+        raise HTTPException(400, "not a Floor Plan drawing")
+    p = _proj_path(name)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+    return {"saved": os.path.basename(p)[:-5], "path": p}
+
+
+@app.delete("/api/projects/{name}")
+def project_delete(name: str):
+    p = _proj_path(name)
+    if os.path.isfile(p):
+        os.remove(p)
+    return {"deleted": name}
+
+
 @app.get("/api/presets")
 def api_presets():
     return {"presets": PRESETS, "default": DEFAULT_PRESET, "tuning": TUNING}

@@ -85,7 +85,7 @@ which `.github/workflows/pages.yml` rebuilds on every push to `main`.
 * Wood-plank floors, which still produce some false wall pieces: wall precision is 67–83 % on 5 of the 30 images (wood and brown-wall styles).
 * One distorted plan (09) whose partitions were partly missed, so its rooms did not close and the room-area scale could not be used.
 
-## The demo: open → correct → scale → prepare → detect → edit → promote
+## The demo: open → correct → scale → prepare → detect → edit → floor plan
 
 `fpvec-demo` (or the Codespace) opens a step-by-step page. The numbered steps run along the top, the current step's
 tools are in the bar under them, and its settings are on the right.
@@ -95,18 +95,19 @@ tools are in the bar under them, and its settings are on the right.
 | **1 Open** | An image, a phone photo or a PDF page (pick the page) |
 | **2 Correct** | Photo correction *Auto / On / Off*: perspective, lighting, rotation. Hold *as uploaded* to compare |
 | **3 Scale** | *Read from the plan* (dimensions or room areas, with a wall-thickness fallback), *Wall thickness*, *Two points* (click two points, type the distance), or *mm per pixel* |
-| **4 Prepare** | Pick a **preset**, or set black & white, *darken lines*, *whiten background* and *boost thin lines* yourself. Remove or blur areas with the brush, rectangle or polygon. **Mark walls**: draw polylines along walls (see below) |
-| **5 Detect** | Run the tracer. The detection settings are on the right (see *Tuning*) |
-| **6 Edit** | Fix the result: select, move and delete walls (joined walls follow), drag a wall's round end handles, slide doors and windows along their wall and resize them, change their type, add walls / doors / windows / openings, set lengths and thicknesses in mm. Undo / redo |
-| **7 Promote** | Open the edited plan in the Floor Plan editor, or download `floor_plan.json`, DXF, SVG or fpvec JSON |
+| **4 Prepare** | The **image sliders** are in the bar at the top: black & white, pure black / white, *darken lines* (0–250), *whiten background* (0–250), *boost thin lines*. The preview updates live, and both sliders go far enough to wipe out any background. Pick a **preset** on the right, or **save your own** (name, *Default* = used for every new image, delete). Remove or blur areas with the brush (size slider), rectangle or polygon. **Mark walls**: draw polylines along walls (see below) |
+| **5 Detect** | Choose **what to detect**: everything; walls, doors and windows; walls and openings (every gap as a plain opening); or walls only. Then run the tracer. The other detection settings are on the right (see *Tuning*) |
+| **6 Edit** | The selected item's properties stay pinned at the top of the right panel, and its row scrolls into view. Fix the result: select, move and delete walls (joined walls follow), drag a wall's round end handles, slide doors and windows along their wall and resize them, change their type, add walls / doors / windows / openings, set lengths and thicknesses in mm. Undo / redo |
+| **7 Floor plan** | Your Floor Plan editor, **inside the page**. The edited result is loaded automatically into an empty editor. **Load result** replaces the drawing and **Add to drawing** adds it to the current level. **Save** / **Open saved…** keep drawings in the `projects/` folder of this project (no download / re-open). Downloads: `floor_plan.json`, DXF, SVG |
 
 Doors are drawn as yellow blocks, windows as blue blocks and plain openings as green outlines. The door swing still
 goes into the editor document (hinge side and direction).
 
-**Promote → Floor Plan editor.** Copy your `floor_plan.html` to `editor/floor_plan.html` (it is git-ignored, see
-`editor/README.md`) and restart `fpvec-demo`. *Open in Floor Plan editor* then opens it at `/editor` with the edited plan
-already loaded: walls, doors and windows as editor objects, with the corrected image as an underlay. Save it there as
-usual. Without the editor file, *Promote* downloads `floor_plan.json` for the editor's *Open*.
+**Floor Plan editor inside the demo.** Copy your `floor_plan.html` to `editor/floor_plan.html` (it is git-ignored, see
+`editor/README.md`) and restart `fpvec-demo`. Step 7 then shows the editor in the page, served from the same address, and
+the demo drives it directly: walls, doors and windows go in as editor objects, with the corrected image as an underlay.
+Drawings saved with **Save** go to `projects/<name>.json` (git-ignored; `FPVEC_PROJECTS` sets another folder). The editor
+is also at `/editor` on its own. Without the editor file, step 7 explains this and offers the downloads.
 
 ### Mark walls (tell the tracer where to look)
 
@@ -138,6 +139,7 @@ Detection settings (*Detect* step, `fpvec/presets.py` → `TUNING`; Python: `Par
 
 | Setting | Default | Effect |
 |---|---|---|
+| `items` | all | What to output: `all`, `walls_doors_windows` (no plain openings), `walls_openings` (every gap as a plain opening, no door / window types), `walls` (walls run through the gaps) |
 | `sensitivity` | auto | Thin / grey line detection: *strict* ignores anti-aliasing and textures, *sensitive* finds light-grey partitions and glazing. *Auto* is sensitive for colour plans and corrected photos, strict otherwise |
 | `plain_openings` | between_walls | Gaps with nothing drawn in them: only where the wall continues on both sides, any gap, or never |
 | `detect_thin_walls` | on | Walls drawn as two thin lines or as a grey band, not only filled ones |
@@ -294,7 +296,7 @@ save_floorplan_doc(plan, "plan_floor_plan.json", image_path="plan.png")
 
 The demo uses a session API: `POST /api/load` (file, page, photo → token + corrected image), `/api/prepare` (token, prep →
 prepared image), `/api/detect` (token, prep, tuning, hints, scale fields → result), `/api/export` (edited plan JSON →
-editor document, DXF, SVG), `GET /api/presets`. The one-shot endpoint below still works.
+editor document, DXF, SVG), `GET /api/presets`, and `GET/POST/DELETE /api/projects[/name]` for saved drawings. The one-shot endpoint below still works.
 
 ```bash
 pip install -e ".[api]"
